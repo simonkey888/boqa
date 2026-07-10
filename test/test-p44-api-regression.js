@@ -661,7 +661,10 @@ await testAsync('POST /api/economic/register with valid data returns 200', async
 });
 
 await testAsync('POST /api/decision-run with empty opportunities returns 400', async () => {
-  const res = await request('POST', '/api/decision-run', { body: {} });
+  const res = await request('POST', '/api/decision-run', {
+    body: {},
+    headers: { 'X-API-Key': process.env.BOQA_API_KEY || 'test-key' }
+  });
   assert(res.status === 400, `expected 400, got ${res.status}`);
 });
 

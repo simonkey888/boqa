@@ -495,78 +495,92 @@ class Agent {
   async start() {
     console.log(`[Agent] Target: ${this.options.target}`);
 
-    if (this.options.cdpEndpoint) {
-      await this._connectCDP();
-    } else {
-      await this._launchBrowser();
-    }
-
-    // CDP session for deep access
-    if (!this.cdpSession) {
-      try {
-        this.cdpSession = await this.page.context().newCDPSession(this.page);
-        console.log('[Agent] CDP session attached');
-      } catch (e) {
-        console.warn('[Agent] CDP session unavailable:', e.message);
-      }
-    }
-
-    // Expose function for instrumentation bridge
+    // Wrap entire start() in try/catch — if anything fails after _launchBrowser(),
+    // call this.stop() immediately to release Chromium resources and avoid OOM leaks.
     try {
-      await this.page.exposeFunction('__boqaEmit', (type, data) => {
-        const typeMap = {
-          'fetch_request': 'network_request', 'xhr_request': 'network_request',
-          'fetch_response': 'network_response', 'xhr_response': 'network_response',
-          'fetch_body': 'network_request', 'xhr_body': 'network_request',
-          'ws_open': 'websocket_open', 'ws_connected': 'websocket_open',
-          'ws_in': 'websocket_message_in', 'ws_out': 'websocket_message_out',
-          'ws_close': 'websocket_close',
-          'cookie_write': 'auth_signal', 'storage_write': 'auth_signal',
-          'cryptojs_decrypt': 'auth_signal', 'init': 'console_log',
-        };
-        const mapped = typeMap[type];
-        if (mapped) {
-          const signalTypeMap = {
-            'cookie_write': 'cookie_write',
-            'storage_write': 'storage_auth_write',
-            'cryptojs_decrypt': 'cryptojs_decrypt',
-          };
-          this.bus.emit({
-            type: mapped,
-            url: data?.url || null,
-            method: data?.method || null,
-            source: 'browser',
-            meta: {
-              instrumentType: type,
-              signalType: signalTypeMap[type] || undefined,
-              ...data,
-            },
-          });
+      if (this.options.cdpEndpoint) {
+        await this._connectCDP();
+      } else {
+        await this._launchBrowser();
+      }
+
+      // CDP session for deep access
+      if (!this.cdpSession) {
+        try {
+          this.cdpSession = await this.page.context().newCDPSession(this.page);
+          console.log('[Agent] CDP session attached');
+        } catch (e) {
+          console.warn('[Agent] CDP session unavailable:', e.message);
         }
+      }
+
+      // Expose function for instrumentation bridge
+      try {
+        await this.page.exposeFunction('__boqaEmit', (type, data) => {
+          const typeMap = {
+            'fetch_request': 'network_request', 'xhr_request': 'network_request',
+            'fetch_response': 'network_response', 'xhr_response': 'network_response',
+            'fetch_body': 'network_request', 'xhr_body': 'network_request',
+            'ws_open': 'websocket_open', 'ws_connected': 'websocket_open',
+            'ws_in': 'websocket_message_in', 'ws_out': 'websocket_message_out',
+            'ws_close': 'websocket_close',
+            'cookie_write': 'auth_signal', 'storage_write': 'auth_signal',
+            'cryptojs_decrypt': 'auth_signal', 'init': 'console_log',
+          };
+          const mapped = typeMap[type];
+          if (mapped) {
+            const signalTypeMap = {
+              'cookie_write': 'cookie_write',
+              'storage_write': 'storage_auth_write',
+              'cryptojs_decrypt': 'cryptojs_decrypt',
+            };
+            this.bus.emit({
+              type: mapped,
+              url: data?.url || null,
+              method: data?.method || null,
+              source: 'browser',
+              meta: {
+                instrumentType: type,
+                signalType: signalTypeMap[type] || undefined,
+                ...data,
+              },
+            });
+          }
+        });
+      } catch (_) {}
+
+      // Inject document-start hooks
+      await this.page.addInitScript(INSTRUMENTATION_SCRIPT);
+      // Also inject __boqaEmit reference for instrumentation script
+      await this.page.addInitScript(() => {
+        window.__boqaEmit = window.__boqaEmit || null;
       });
-    } catch (_) {}
 
-    // Inject document-start hooks
-    await this.page.addInitScript(INSTRUMENTATION_SCRIPT);
-    // Also inject __boqaEmit reference for instrumentation script
-    await this.page.addInitScript(() => {
-      window.__boqaEmit = window.__boqaEmit || null;
-    });
+      // Attach Playwright-level hooks
+      this._hookNetwork();
+      this._hookWebSocket();
+      this._hookConsole();
+      this._hookNavigation();
+      this._startCookiePoll();
+      this._startPerfPoll();
 
-    // Attach Playwright-level hooks
-    this._hookNetwork();
-    this._hookWebSocket();
-    this._hookConsole();
-    this._hookNavigation();
-    this._startCookiePoll();
-    this._startPerfPoll();
+      // Navigate
+      console.log(`[Agent] Navigating to ${this.options.target}`);
+      await this.page.goto(this.options.target, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      console.log('[Agent] Page loaded — instrumentation active');
 
-    // Navigate
-    console.log(`[Agent] Navigating to ${this.options.target}`);
-    await this.page.goto(this.options.target, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    console.log('[Agent] Page loaded — instrumentation active');
-
-    return this.page;
+      return this.page;
+    } catch (err) {
+      // If anything failed AFTER _launchBrowser()/_connectCDP() opened Chromium,
+      // we MUST close the browser to avoid orphan Chromium processes leaking RAM.
+      console.error('[Agent] start() failed — releasing browser:', err.message);
+      try {
+        await this.stop();
+      } catch (stopErr) {
+        console.error('[Agent] stop() also failed during cleanup:', stopErr.message);
+      }
+      throw err; // re-throw so server.js can mark degraded mode
+    }
   }
 
   async _launchBrowser() {

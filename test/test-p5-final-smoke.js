@@ -450,19 +450,120 @@ async function runTests() {
 }
 
 // ─── Main ────────────────────────────────────────────────────────────
+//
+// Fix: el test runner ejecuta cada test en un subproceso aislado, así que
+// `waitForServer()` (que espera un server externo) siempre fallaba con timeout.
+// Ahora levantamos el server Express de forma in-process (igual que test-smoke-combined.js)
+// y lo cerramos limpiamente al terminar.
 
-async function main() {
-  console.log('[Smoke] Waiting for server...');
-  const ready = await waitForServer();
-  if (!ready) {
-    console.error('[Smoke] Server never became ready. Aborting.');
-    process.exit(1);
-  }
-  await runTests();
+async function startInProcessServer() {
+  const path = require('path');
+  const ROOT = path.resolve(__dirname, '..');
+  process.chdir(ROOT);
+  const r = (p) => require(path.join(ROOT, p));
+
+  const express = require('express');
+  const http = require('http');
+  const { WebSocketServer } = require('ws');
+
+  const PORT = process.env.BOQA_PORT || 7070;
+  process.env.BOQA_PORT = PORT;
+  process.env.BOQA_AUTO_ANALYZE = 'false';
+  process.env.HEADLESS = 'true';
+
+  const { CONFIG, OUTPUT_DIR } = r('lib/config');
+  const { createRequireAgent, errorHandler, requireApiKey, rateLimiter } = r('lib/middleware');
+  const { initialize } = r('lib/init');
+
+  const ctx = initialize(CONFIG, OUTPUT_DIR);
+  const requireAgent = createRequireAgent(() => ctx.agent, () => ctx.agentInitError);
+
+  const app = express();
+  app.use(express.json());
+  const server = http.createServer(app);
+  app.use(express.static(path.join(ROOT, 'dashboard')));
+
+  // Auth boundary (skips whitelisted endpoints)
+  const AUTH_WHITELIST = new Set(['/health', '/replay/health', '/runtime/metrics']);
+  app.use('/api', (req, res, next) => {
+    if (AUTH_WHITELIST.has(req.path)) return next();
+    rateLimiter(req, res, (err) => {
+      if (err) return next(err);
+      requireApiKey(req, res, next);
+    });
+  });
+
+  const pipelines = r('lib/pipelines');
+
+  const wss = new WebSocketServer({ server, path: '/ws' });
+  ctx.bus.wsServer = wss;
+  ctx.wss = wss;
+  ctx.server = server;
+
+  const middleware = { requireAgent, requireApiKey, rateLimiter };
+  r('routes/v01').registerRoutes(app, ctx, middleware, pipelines);
+  r('routes/v08').registerRoutes(app, ctx, middleware, pipelines);
+  r('routes/v09').registerRoutes(app, ctx, middleware, pipelines);
+  r('routes/v11').registerRoutes(app, ctx, middleware, pipelines);
+  r('routes/v12').registerRoutes(app, ctx, middleware, pipelines);
+  r('routes/v13').registerRoutes(app, ctx, middleware, pipelines);
+  r('routes/v14').registerRoutes(app, ctx, middleware, pipelines);
+  r('routes/v15').registerRoutes(app, ctx, middleware, pipelines);
+  r('routes/s6').registerRoutes(app, ctx, middleware, pipelines);
+
+  const { wireEventHandlers } = r('lib/event-wiring');
+  wireEventHandlers(ctx, pipelines);
+
+  app.use(errorHandler);
+
+  return new Promise((resolve, reject) => {
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`[Smoke] In-process server listening on :${PORT}`);
+      resolve({ server, ctx, wss });
+    });
+    server.on('error', reject);
+  });
 }
 
-main().catch(err => {
-  console.error('[Smoke] Fatal error:', err);
-  process.exit(1);
-});
+async function stopInProcessServer(serverObj) {
+  try {
+    const { ctx } = serverObj;
+    if (ctx.wss && ctx.wss.clients) {
+      ctx.wss.clients.forEach((ws) => {
+        try { ws.close(); } catch (_) {}
+      });
+    }
+    if (ctx.agent && typeof ctx.agent.stop === 'function') {
+      try { await ctx.agent.stop(); } catch (_) {}
+    }
+    if (ctx.server) {
+      await new Promise((resolve) => ctx.server.close(resolve));
+    }
+  } catch (_) {}
+}
+
+async function main() {
+  let serverObj;
+  try {
+    console.log('[Smoke] Starting in-process BOQA server...');
+    serverObj = await startInProcessServer();
+    console.log('[Smoke] Waiting for /api/health to be ready...');
+    const ready = await waitForServer();
+    if (!ready) {
+      console.error('[Smoke] Server never became ready. Aborting.');
+      await stopInProcessServer(serverObj);
+      process.exit(1);
+    }
+    await runTests();
+    const exitCode = testsFailed > 0 ? 1 : 0;
+    await stopInProcessServer(serverObj);
+    process.exit(exitCode);
+  } catch (err) {
+    console.error('[Smoke] Fatal error:', err);
+    if (serverObj) await stopInProcessServer(serverObj);
+    process.exit(1);
+  }
+}
+
+main();
 

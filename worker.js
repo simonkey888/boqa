@@ -321,6 +321,28 @@ async function proxyToBackend(request, env) {
 
   try {
     const backendRes = await fetch(proxyReq);
+
+    // Fix: Cloudflare Workers forbid setting a body on responses with status
+    // 101 (Switching Protocols / WebSocket upgrade), 204, 205, or 304.
+    // For WebSocket upgrades (status 101 or Upgrade: websocket header), return
+    // 426 — clients fall back to HTTP polling.
+    const isWebSocketUpgrade =
+      backendRes.status === 101 ||
+      (backendRes.headers.get('upgrade') || '').toLowerCase() === 'websocket';
+
+    if (isWebSocketUpgrade) {
+      return new Response(
+        JSON.stringify({
+          error: 'websocket_not_supported_via_worker',
+          message: 'WebSocket upgrade cannot be proxied via Cloudflare Workers free tier. Dashboard uses HTTP polling fallback.',
+        }),
+        {
+          status: 426,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    }
+
     const respHeaders = new Headers(backendRes.headers);
     respHeaders.delete('Transfer-Encoding');
     return new Response(backendRes.body, {
