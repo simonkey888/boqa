@@ -389,7 +389,24 @@ export default {
 
     // Everything else → serve from static assets (dashboard)
     if (env && env.ASSETS) {
-      return env.ASSETS.fetch(request);
+      // Add no-cache headers for HTML/JS/CSS so users always get the latest version
+      const assetRes = await env.ASSETS.fetch(request);
+      const url = new URL(request.url);
+      const isHtml = url.pathname === '/' || url.pathname.endsWith('.html');
+      const isJs = url.pathname.endsWith('.js');
+      const isCss = url.pathname.endsWith('.css');
+      if (isHtml || isJs || isCss) {
+        const headers = new Headers(assetRes.headers);
+        headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+        headers.set('Pragma', 'no-cache');
+        headers.set('Expires', '0');
+        return new Response(assetRes.body, {
+          status: assetRes.status,
+          statusText: assetRes.statusText,
+          headers,
+        });
+      }
+      return assetRes;
     }
 
     return new Response('BOQA Worker — no assets bound', { status: 404 });
