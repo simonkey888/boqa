@@ -2,9 +2,19 @@
 # URGENT-3: Containerization for Northflank deployment
 #
 # Build:  docker build -t boqa:1.4.0 .
-# Run:    docker run -p 7070:7070 -e BOQA_API_KEY=your-key boqa:1.4.0
+# Run:    docker run -p 7070:7070 boqa:1.4.0
+#
+# Default API key is BOQA123 (override with -e BOQA_API_KEY=<stronger-key>
+# in production for better security).
 
 FROM node:20-slim
+
+# Default API key — accepts "BOQA123" out of the box.
+# Override in production with: docker run -e BOQA_API_KEY=<stronger-key> ...
+ENV BOQA_API_KEY=BOQA123
+ENV BOQA_MODE=live
+ENV BOQA_AUTO_ANALYZE=true
+ENV HEADLESS=true
 
 # Install Playwright Chromium dependencies
 # These are required for headless browser execution
