@@ -1,0 +1,10 @@
+name = "boqa"
+compatibility_date = "2024-12-01"
+pages_build_output_dir = "dashboard"
+account_id = "b21fa81d12acb663798f9f7c51801955"
+
+# Backend API URL — set this to your Northflank (or other Node.js host) URL.
+# When the dashboard makes /api/* or /ws requests, they get proxied to this backend.
+# Until you set this, the dashboard will load but won't be able to fetch data.
+[vars]
+BOQA_BACKEND_URL = ""
