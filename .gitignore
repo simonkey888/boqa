@@ -1,0 +1,41 @@
+# Node.js
+node_modules/
+npm-debug.log*
+.npm/
+
+# Runtime data
+output/
+sessions/
+reports/
+*.log
+
+# Backups from scaffold work
+_broken/
+*.stub-bak
+*.bak
+
+# Dashboard backups (local only)
+dashboard/_prev/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Cloudflare
+.wrangler/
+wrangler.toml.local
+
+# Playwright
+/playwright-report/
+/test-results/

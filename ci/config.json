@@ -1,0 +1,26 @@
+{
+  "targets": [
+    {
+      "name": "ripio-production",
+      "url": "https://ripio.com",
+      "duration": 120,
+      "severity_threshold": 40,
+      "auth_regression_threshold": 70
+    }
+  ],
+  "baseline_auto_create": true,
+  "headless": true,
+  "exit_codes": {
+    "0": "clean — no anomalies above threshold",
+    "1": "anomalies_detected — severity between threshold and auth_regression",
+    "2": "auth_regression_detected — severity above auth_regression threshold"
+  },
+  "artifacts": {
+    "session": true,
+    "report": true,
+    "diff": true,
+    "anomaly": true,
+    "ndjson": true
+  }
+}
+

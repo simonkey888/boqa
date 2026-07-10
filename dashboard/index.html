@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BOQA — IA Hunter Command</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- 1. AUTH GATE (Bloqueo de acceso local para Northflank) -->
+  <div class="auth-gate-modal" id="auth-gate">
+    <div class="auth-gate-card">
+      <div class="brand-dot"></div>
+      <h3>BOQA IA Hunter</h3>
+      <p>Ingrese su clave secreta (BOQA_API_KEY) para conectar con el agente en la nube.</p>
+      <input type="password" id="auth-gate-input" placeholder="Clave API" autocomplete="off" spellcheck="false" />
+      <button class="btn-primary" id="auth-gate-btn" style="width: 100%;">Conectar Consola</button>
+      <div class="auth-gate-error hidden" id="auth-gate-error">Clave inválida o servidor inactivo.</div>
+    </div>
+  </div>
+
+  <!-- 2. LAYOUT PRINCIPAL -->
+  <div class="twenty-layout">
+
+    <!-- Barra Lateral -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <span class="brand-dot active"></span>
+        <span class="brand-text">BOQA HUNTER</span>
+      </div>
+      <nav class="sidebar-menu">
+        <button class="menu-item active" data-tab="detections">IA en Vivo</button>
+        <button class="menu-item" data-tab="reports">Centro de Cobros</button>
+      </nav>
+      <div class="sidebar-status">
+        <span class="status-indicator" id="srv-status"></span>
+        <span class="status-text" id="srv-status-text">Desconectado</span>
+      </div>
+    </aside>
+
+    <!-- Área de Contenido -->
+    <main class="main-content">
+
+      <!-- PANEL 1: IA EN VIVO -->
+      <section class="tab-panel active" id="panel-detections">
+        <header class="panel-header">
+          <h2>Monitoreo en Tiempo Real</h2>
+          <p class="panel-desc">Flujo de navegación y análisis de heurísticas del Hunter.</p>
+        </header>
+
+        <!-- Tarjetas de Métricas Directas -->
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-title">Bugs Confirmados</span>
+            <span class="metric-value text-red" id="m-bugs">0</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Cobertura de API</span>
+            <span class="metric-value text-cyan" id="m-coverage">0%</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-title">Uptime del Servidor</span>
+            <span class="metric-value text-green" id="m-uptime">00:00:00</span>
+          </div>
+        </div>
+
+        <!-- Consola de Eventos del Hunter -->
+        <div class="card stream-card">
+          <div class="card-header">Actividad del Agente</div>
+          <div class="event-stream" id="event-stream">
+            <div class="stream-empty">Esperando inicialización del Hunter...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PANEL 2: REPORTES Y COBROS -->
+      <section class="tab-panel" id="panel-reports">
+        <header class="panel-header">
+          <h2>Centro de Cobros & Bounties</h2>
+          <p class="panel-desc">Acceda a la evidencia forense validada y exporte reportes profesionales.</p>
+        </header>
+
+        <div class="reports-layout">
+          <!-- Lista de Bugs Confirmados -->
+          <div class="card list-card">
+            <div class="card-header">Bugs Listos para Reportar</div>
+            <div class="report-list" id="report-list">
+              <div class="stream-empty">Buscando hallazgos confirmados...</div>
+            </div>
+          </div>
+
+          <!-- Detalles del reporte seleccionado -->
+          <div class="card detail-card">
+            <div class="card-header">Evidencia Forense</div>
+            <div class="report-detail-placeholder" id="report-detail-placeholder">
+              Seleccione un bug confirmado para preparar el informe de entrega.
+            </div>
+            <div class="report-detail-content hidden" id="report-detail-content">
+              <!-- JS inyectará el contenido estructurado aquí -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</body>
+</html>

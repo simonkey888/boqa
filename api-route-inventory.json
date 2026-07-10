@@ -1,0 +1,1161 @@
+{
+  "generated_at": "2026-03-05",
+  "total_routes": 120,
+  "source_files": 8,
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/alignment",
+      "middleware": [],
+      "source": "routes/v13.js:123",
+      "description": "Reality alignment status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/alignment/align",
+      "middleware": [],
+      "source": "routes/v13.js:138",
+      "description": "Align an opportunity against benchmarks"
+    },
+    {
+      "method": "POST",
+      "path": "/api/alignment/benchmark",
+      "middleware": [],
+      "source": "routes/v13.js:152",
+      "description": "Set custom benchmarks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/allocation",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:163",
+      "description": "Capital allocation simulation results"
+    },
+    {
+      "method": "POST",
+      "path": "/api/allocation/optimize",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:200",
+      "description": "Optimize portfolio allocation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/allocation/simulate",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:175",
+      "description": "Run allocation simulation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/allocation/surface",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:225",
+      "description": "Compute return surface"
+    },
+    {
+      "method": "POST",
+      "path": "/api/analyze",
+      "middleware": [],
+      "source": "routes/v01.js:136",
+      "description": "Trigger manual analysis pipeline"
+    },
+    {
+      "method": "GET",
+      "path": "/api/anomalies",
+      "middleware": ["requireAgent"],
+      "source": "routes/v01.js:54",
+      "description": "Anomaly detection results"
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets",
+      "middleware": [],
+      "source": "routes/v01.js:412",
+      "description": "Get asset graphs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/assets/:targetId/export",
+      "middleware": [],
+      "source": "routes/v01.js:427",
+      "description": "Export asset graph for visualization"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth-graph",
+      "middleware": ["requireAgent"],
+      "source": "routes/v01.js:128",
+      "description": "Authentication flow graph"
+    },
+    {
+      "method": "GET",
+      "path": "/api/autonomy",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v14.js:26",
+      "description": "AutonomyGovernor status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/autonomy/audit",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v14.js:118",
+      "description": "Get audit log"
+    },
+    {
+      "method": "POST",
+      "path": "/api/autonomy/check",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v14.js:39",
+      "description": "Check autonomy permission for a decision"
+    },
+    {
+      "method": "POST",
+      "path": "/api/autonomy/level",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v14.js:99",
+      "description": "Manually set autonomy level"
+    },
+    {
+      "method": "POST",
+      "path": "/api/autonomy/mode",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v14.js:86",
+      "description": "Set behavioral mode"
+    },
+    {
+      "method": "POST",
+      "path": "/api/autonomy/outcome",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v14.js:112",
+      "description": "Record a decision outcome for meta-learning"
+    },
+    {
+      "method": "POST",
+      "path": "/api/autonomy/pipeline",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v14.js:60",
+      "description": "Run full v1.4 decision pipeline"
+    },
+    {
+      "method": "GET",
+      "path": "/api/autonomy/permission-matrix",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v14.js:124",
+      "description": "View current permission matrix"
+    },
+    {
+      "method": "GET",
+      "path": "/api/baselines",
+      "middleware": [],
+      "source": "routes/v01.js:52",
+      "description": "List baselines"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bug/:id",
+      "middleware": [],
+      "source": "routes/v01.js:181",
+      "description": "Single confirmed bug"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bugs",
+      "middleware": [],
+      "source": "routes/v01.js:163",
+      "description": "Confirmed bugs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/calibration",
+      "middleware": [],
+      "source": "routes/v11.js:131",
+      "description": "Confidence calibration state"
+    },
+    {
+      "method": "POST",
+      "path": "/api/calibration/observe",
+      "middleware": [],
+      "source": "routes/v11.js:146",
+      "description": "Record a calibration observation"
+    },
+    {
+      "method": "GET",
+      "path": "/api/campaign-forecast",
+      "middleware": [],
+      "source": "routes/v08.js:100",
+      "description": "Recommended campaign shapes"
+    },
+    {
+      "method": "GET",
+      "path": "/api/campaigns",
+      "middleware": [],
+      "source": "routes/v01.js:841",
+      "description": "Campaign list and status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/campaigns",
+      "middleware": [],
+      "source": "routes/v01.js:854",
+      "description": "Create a new campaign"
+    },
+    {
+      "method": "GET",
+      "path": "/api/campaigns/:id",
+      "middleware": [],
+      "source": "routes/v01.js:864",
+      "description": "Single campaign"
+    },
+    {
+      "method": "POST",
+      "path": "/api/campaigns/:id/iterate",
+      "middleware": [],
+      "source": "routes/v01.js:898",
+      "description": "Execute one iteration"
+    },
+    {
+      "method": "POST",
+      "path": "/api/campaigns/:id/pause",
+      "middleware": [],
+      "source": "routes/v01.js:888",
+      "description": "Pause a campaign"
+    },
+    {
+      "method": "POST",
+      "path": "/api/campaigns/:id/start",
+      "middleware": [],
+      "source": "routes/v01.js:871",
+      "description": "Start a campaign"
+    },
+    {
+      "method": "GET",
+      "path": "/api/comparator",
+      "middleware": [],
+      "source": "routes/v12.js:65",
+      "description": "Cross-class opportunity comparison"
+    },
+    {
+      "method": "POST",
+      "path": "/api/comparator/compare",
+      "middleware": [],
+      "source": "routes/v12.js:81",
+      "description": "Run comparison across all scored opportunities"
+    },
+    {
+      "method": "POST",
+      "path": "/api/comparator/profile",
+      "middleware": [],
+      "source": "routes/v12.js:106",
+      "description": "Set the active decision profile"
+    },
+    {
+      "method": "GET",
+      "path": "/api/counterfactual",
+      "middleware": [],
+      "source": "routes/v13.js:67",
+      "description": "Counterfactual validation status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/counterfactual/validate",
+      "middleware": [],
+      "source": "routes/v13.js:82",
+      "description": "Validate an opportunity with counterfactual scenarios"
+    },
+    {
+      "method": "GET",
+      "path": "/api/coverage",
+      "middleware": [],
+      "source": "routes/v01.js:542",
+      "description": "Coverage map and score for current target"
+    },
+    {
+      "method": "GET",
+      "path": "/api/decision-run",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:235",
+      "description": "Decision run history"
+    },
+    {
+      "method": "POST",
+      "path": "/api/decision-run",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:246",
+      "description": "Execute a full decision run"
+    },
+    {
+      "method": "GET",
+      "path": "/api/decision-run/:id",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:301",
+      "description": "Get a specific decision run"
+    },
+    {
+      "method": "GET",
+      "path": "/api/dedup",
+      "middleware": [],
+      "source": "routes/v01.js:449",
+      "description": "Dedup statistics and canonical findings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/diff",
+      "middleware": [],
+      "source": "routes/v01.js:59",
+      "description": "Last diff result"
+    },
+    {
+      "method": "POST",
+      "path": "/api/disclosure",
+      "middleware": [],
+      "source": "routes/v01.js:251",
+      "description": "Generate disclosure report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/disclosures",
+      "middleware": [],
+      "source": "routes/v01.js:460",
+      "description": "List disclosure packages"
+    },
+    {
+      "method": "POST",
+      "path": "/api/disclosures",
+      "middleware": [],
+      "source": "routes/v01.js:471",
+      "description": "Create a disclosure package"
+    },
+    {
+      "method": "POST",
+      "path": "/api/disclosures/:id/acknowledge",
+      "middleware": [],
+      "source": "routes/v01.js:508",
+      "description": "Acknowledge disclosure"
+    },
+    {
+      "method": "POST",
+      "path": "/api/disclosures/:id/finalize",
+      "middleware": [],
+      "source": "routes/v01.js:487",
+      "description": "Finalize a disclosure package"
+    },
+    {
+      "method": "GET",
+      "path": "/api/disclosures/:id/report",
+      "middleware": [],
+      "source": "routes/v01.js:528",
+      "description": "Generate Markdown report for disclosure"
+    },
+    {
+      "method": "POST",
+      "path": "/api/disclosures/:id/resolve",
+      "middleware": [],
+      "source": "routes/v01.js:518",
+      "description": "Resolve disclosure"
+    },
+    {
+      "method": "POST",
+      "path": "/api/disclosures/:id/submit",
+      "middleware": [],
+      "source": "routes/v01.js:497",
+      "description": "Submit a disclosure package"
+    },
+    {
+      "method": "GET",
+      "path": "/api/discovery",
+      "middleware": [],
+      "source": "routes/v01.js:558",
+      "description": "Discovery pipeline state and exploration plan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/discovery",
+      "middleware": [],
+      "source": "routes/v01.js:574",
+      "description": "Set execution mode or trigger discovery action"
+    },
+    {
+      "method": "GET",
+      "path": "/api/discovery-yield",
+      "middleware": [],
+      "source": "routes/v01.js:994",
+      "description": "Discovery yield metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/discovery/loop",
+      "middleware": [],
+      "source": "routes/v11.js:28",
+      "description": "Discovery loop state and ranked hypotheses (v1.1 namespaced)"
+    },
+    {
+      "method": "POST",
+      "path": "/api/discovery/pause",
+      "middleware": [],
+      "source": "routes/v11.js:53",
+      "description": "Pause the discovery loop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/discovery/cycle",
+      "middleware": [],
+      "source": "routes/v11.js:59",
+      "description": "Run a single discovery cycle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/discovery/start",
+      "middleware": [],
+      "source": "routes/v11.js:47",
+      "description": "Start the discovery loop"
+    },
+    {
+      "method": "POST",
+      "path": "/api/discovery/validate",
+      "middleware": [],
+      "source": "routes/v11.js:69",
+      "description": "Record a validation result"
+    },
+    {
+      "method": "GET",
+      "path": "/api/economic",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:26",
+      "description": "Economic value scores and portfolio summary"
+    },
+    {
+      "method": "POST",
+      "path": "/api/economic/register",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:44",
+      "description": "Register an opportunity for economic scoring"
+    },
+    {
+      "method": "POST",
+      "path": "/api/economic/score-all",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:59",
+      "description": "Score all registered opportunities"
+    },
+    {
+      "method": "GET",
+      "path": "/api/efficiency",
+      "middleware": [],
+      "source": "routes/v09.js:101",
+      "description": "Efficiency metrics and benchmarks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/events",
+      "middleware": [],
+      "source": "routes/v01.js:39",
+      "description": "Event log with pagination"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evidence",
+      "middleware": [],
+      "source": "routes/v01.js:112",
+      "description": "All evidence packages"
+    },
+    {
+      "method": "GET",
+      "path": "/api/export",
+      "middleware": [],
+      "source": "routes/v01.js:48",
+      "description": "Export full session"
+    },
+    {
+      "method": "GET",
+      "path": "/api/feedback",
+      "middleware": [],
+      "source": "routes/v09.js:82",
+      "description": "Feedback loop state and recent adjustments"
+    },
+    {
+      "method": "GET",
+      "path": "/api/finding/:id",
+      "middleware": [],
+      "source": "routes/v01.js:100",
+      "description": "Single finding"
+    },
+    {
+      "method": "GET",
+      "path": "/api/findings",
+      "middleware": [],
+      "source": "routes/v01.js:82",
+      "description": "All findings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "middleware": [],
+      "source": "routes/v01.js:1097",
+      "description": "Server health + agent status (CF-004)"
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypotheses",
+      "middleware": [],
+      "source": "routes/v01.js:610",
+      "description": "Hypothesis queue with EVV scores"
+    },
+    {
+      "method": "POST",
+      "path": "/api/hypotheses",
+      "middleware": [],
+      "source": "routes/v01.js:633",
+      "description": "Submit a new hypothesis"
+    },
+    {
+      "method": "GET",
+      "path": "/api/hypotheses-v2",
+      "middleware": [],
+      "source": "routes/v11.js:79",
+      "description": "Ranked hypothesis set (v1.1 output)"
+    },
+    {
+      "method": "GET",
+      "path": "/api/intelligence",
+      "middleware": [],
+      "source": "routes/v01.js:1073",
+      "description": "Target intelligence profiles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/knowledge",
+      "middleware": [],
+      "source": "routes/v01.js:694",
+      "description": "Knowledge base contents and metrics"
+    },
+    {
+      "method": "GET",
+      "path": "/api/leaderboard",
+      "middleware": [],
+      "source": "routes/v01.js:436",
+      "description": "Ranked findings leaderboard"
+    },
+    {
+      "method": "GET",
+      "path": "/api/learning",
+      "middleware": [],
+      "source": "routes/v01.js:940",
+      "description": "Learning engine metrics and weights"
+    },
+    {
+      "method": "POST",
+      "path": "/api/learning",
+      "middleware": [],
+      "source": "routes/v01.js:956",
+      "description": "Control the learning engine"
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory",
+      "middleware": [],
+      "source": "routes/v11.js:161",
+      "description": "Memory graph state and stats"
+    },
+    {
+      "method": "POST",
+      "path": "/api/memory/node",
+      "middleware": [],
+      "source": "routes/v11.js:182",
+      "description": "Add a node to the memory graph"
+    },
+    {
+      "method": "GET",
+      "path": "/api/memory/similar",
+      "middleware": [],
+      "source": "routes/v11.js:189",
+      "description": "Find similar nodes by features"
+    },
+    {
+      "method": "GET",
+      "path": "/api/metrics",
+      "middleware": [],
+      "source": "routes/v01.js:774",
+      "description": "North star metrics for the autonomous discovery engine"
+    },
+    {
+      "method": "GET",
+      "path": "/api/next-best-action",
+      "middleware": [],
+      "source": "routes/v08.js:82",
+      "description": "Prioritized action recommendations"
+    },
+    {
+      "method": "GET",
+      "path": "/api/optimize",
+      "middleware": [],
+      "source": "routes/v09.js:26",
+      "description": "Current optimization state, strategy, and objective score"
+    },
+    {
+      "method": "GET",
+      "path": "/api/optimizer",
+      "middleware": [],
+      "source": "routes/v01.js:1038",
+      "description": "Resource optimizer allocation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/optimizer",
+      "middleware": [],
+      "source": "routes/v01.js:1051",
+      "description": "Trigger rebalance"
+    },
+    {
+      "method": "GET",
+      "path": "/api/permission",
+      "middleware": [],
+      "source": "routes/v01.js:225",
+      "description": "Permission analysis"
+    },
+    {
+      "method": "GET",
+      "path": "/api/planner",
+      "middleware": [],
+      "source": "routes/v01.js:730",
+      "description": "Coverage planner state and current plan"
+    },
+    {
+      "method": "POST",
+      "path": "/api/planner",
+      "middleware": [],
+      "source": "routes/v01.js:744",
+      "description": "Control the planner"
+    },
+    {
+      "method": "GET",
+      "path": "/api/policy",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:117",
+      "description": "Policy decisions and action portfolio"
+    },
+    {
+      "method": "POST",
+      "path": "/api/policy/approve",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:152",
+      "description": "Grant human approval for DEPLOY"
+    },
+    {
+      "method": "POST",
+      "path": "/api/policy/decide",
+      "middleware": ["requireApiKey", "rateLimiter"],
+      "source": "routes/v12.js:132",
+      "description": "Decide policies for all scored opportunities"
+    },
+    {
+      "method": "GET",
+      "path": "/api/portfolio",
+      "middleware": [],
+      "source": "routes/v01.js:915",
+      "description": "Portfolio risk assessment"
+    },
+    {
+      "method": "GET",
+      "path": "/api/predictions",
+      "middleware": [],
+      "source": "routes/v08.js:26",
+      "description": "Target and category yield predictions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/queue",
+      "middleware": [],
+      "source": "routes/v01.js:361",
+      "description": "Get queue status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/queue/:id/cancel",
+      "middleware": [],
+      "source": "routes/v01.js:372",
+      "description": "Cancel a job"
+    },
+    {
+      "method": "POST",
+      "path": "/api/queue/:id/prioritize",
+      "middleware": [],
+      "source": "routes/v01.js:379",
+      "description": "Change job priority"
+    },
+    {
+      "method": "GET",
+      "path": "/api/readiness",
+      "middleware": [],
+      "source": "routes/v01.js:1100",
+      "description": "Disclosure readiness assessment"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/capture",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:488",
+      "description": "Capture current session (shortcut)"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/farm/job/:id",
+      "middleware": [],
+      "source": "routes/v15.js:305",
+      "description": "Get replay farm job"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/replay/farm/job/:id",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:317",
+      "description": "Cancel a replay farm job"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/farm/status",
+      "middleware": [],
+      "source": "routes/v15.js:296",
+      "description": "Replay farm status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/farm/submit",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:275",
+      "description": "Submit a replay farm job"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/health",
+      "middleware": [],
+      "source": "routes/v15.js:27",
+      "description": "Replay health endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/index",
+      "middleware": [],
+      "source": "routes/v15.js:330",
+      "description": "Time machine index search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/index/compare/:idA/:idB",
+      "middleware": [],
+      "source": "routes/v15.js:376",
+      "description": "Compare two replays"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/index/drift/:id",
+      "middleware": [],
+      "source": "routes/v15.js:388",
+      "description": "Find drift for a replay"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/index/stats",
+      "middleware": [],
+      "source": "routes/v15.js:358",
+      "description": "Time machine index stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/index/timeline/:domain",
+      "middleware": [],
+      "source": "routes/v15.js:367",
+      "description": "Get timeline for a domain"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/manifest",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:33",
+      "description": "Build replay manifest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/manifests",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:58",
+      "description": "List replay manifests"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/record/export",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:149",
+      "description": "Export recording"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/record/start",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:71",
+      "description": "Start session recording"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/record/step",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:120",
+      "description": "Mark step boundary in recording"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/record/stop",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:92",
+      "description": "Stop session recording"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/record/status",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:135",
+      "description": "Recording status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/run",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:162",
+      "description": "Run deterministic replay"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/scenarios",
+      "middleware": [],
+      "source": "routes/v15.js:225",
+      "description": "List replay scenarios"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/scenarios",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:252",
+      "description": "Create a replay scenario"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/scenarios/:id",
+      "middleware": [],
+      "source": "routes/v15.js:240",
+      "description": "Get a single replay scenario"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/scenarios/:id/resolve",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:261",
+      "description": "Resolve scenario steps"
+    },
+    {
+      "method": "GET",
+      "path": "/api/replay/security/audit",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:466",
+      "description": "Replay security audit log"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/security/encrypt",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:453",
+      "description": "Encrypt data for replay"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/security/redact",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:401",
+      "description": "Redact sensitive data"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/security/retention",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:475",
+      "description": "Apply retention policy"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/security/scan",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:414",
+      "description": "Scan for secrets"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/security/sign",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:427",
+      "description": "Sign data"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/security/verify",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:440",
+      "description": "Verify data signature"
+    },
+    {
+      "method": "POST",
+      "path": "/api/replay/verify",
+      "middleware": ["requireApiKey"],
+      "source": "routes/v15.js:194",
+      "description": "Replay verification"
+    },
+    {
+      "method": "GET",
+      "path": "/api/report",
+      "middleware": ["requireAgent"],
+      "source": "routes/v01.js:50",
+      "description": "Agent report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reproduction/:bugId",
+      "middleware": [],
+      "source": "routes/v01.js:244",
+      "description": "Reproduction chain for a bug"
+    },
+    {
+      "method": "GET",
+      "path": "/api/resources",
+      "middleware": [],
+      "source": "routes/v09.js:65",
+      "description": "Resource allocation and worker pool state"
+    },
+    {
+      "method": "GET",
+      "path": "/api/risk",
+      "middleware": [],
+      "source": "routes/v01.js:123",
+      "description": "Risk summary"
+    },
+    {
+      "method": "GET",
+      "path": "/api/risk-forecast",
+      "middleware": [],
+      "source": "routes/v08.js:66",
+      "description": "Regression risk by target and campaign"
+    },
+    {
+      "method": "GET",
+      "path": "/api/schedule",
+      "middleware": [],
+      "source": "routes/v09.js:48",
+      "description": "Scan task queue and schedule"
+    },
+    {
+      "method": "POST",
+      "path": "/api/scan",
+      "middleware": [],
+      "source": "routes/v01.js:342",
+      "description": "Queue a scan job"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sessions",
+      "middleware": [],
+      "source": "routes/v01.js:64",
+      "description": "List saved sessions"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stability",
+      "middleware": [],
+      "source": "routes/v13.js:96",
+      "description": "Decision stability status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/stability/stabilize",
+      "middleware": [],
+      "source": "routes/v13.js:109",
+      "description": "Stabilize a decision through temporal smoothing"
+    },
+    {
+      "method": "GET",
+      "path": "/api/state-diff",
+      "middleware": [],
+      "source": "routes/v01.js:235",
+      "description": "State diff snapshots and comparisons"
+    },
+    {
+      "method": "GET",
+      "path": "/api/stats",
+      "middleware": [],
+      "source": "routes/v01.js:37",
+      "description": "Bus stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/surfaces",
+      "middleware": [],
+      "source": "routes/v11.js:100",
+      "description": "Attack surface model data"
+    },
+    {
+      "method": "POST",
+      "path": "/api/surfaces/build",
+      "middleware": [],
+      "source": "routes/v11.js:116",
+      "description": "Build surface model for a target"
+    },
+    {
+      "method": "GET",
+      "path": "/api/targets",
+      "middleware": [],
+      "source": "routes/v01.js:304",
+      "description": "List all targets"
+    },
+    {
+      "method": "POST",
+      "path": "/api/targets",
+      "middleware": [],
+      "source": "routes/v01.js:294",
+      "description": "Register a new authorized target"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/targets/:id",
+      "middleware": [],
+      "source": "routes/v01.js:333",
+      "description": "Remove target"
+    },
+    {
+      "method": "GET",
+      "path": "/api/targets/:id",
+      "middleware": [],
+      "source": "routes/v01.js:315",
+      "description": "Single target"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/targets/:id",
+      "middleware": [],
+      "source": "routes/v01.js:322",
+      "description": "Update target"
+    },
+    {
+      "method": "GET",
+      "path": "/api/uncertainty",
+      "middleware": [],
+      "source": "routes/v13.js:26",
+      "description": "Uncertainty gating status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uncertainty/gate",
+      "middleware": [],
+      "source": "routes/v13.js:41",
+      "description": "Gate an opportunity through uncertainty filter"
+    },
+    {
+      "method": "POST",
+      "path": "/api/uncertainty/lock",
+      "middleware": [],
+      "source": "routes/v13.js:55",
+      "description": "Activate/deactivate global decision lock"
+    },
+    {
+      "method": "GET",
+      "path": "/api/verification",
+      "middleware": [],
+      "source": "routes/v01.js:193",
+      "description": "Verification plans and results"
+    },
+    {
+      "method": "GET",
+      "path": "/api/verification-queue",
+      "middleware": [],
+      "source": "routes/v01.js:662",
+      "description": "Verification farm queue and results"
+    },
+    {
+      "method": "POST",
+      "path": "/api/verification-queue",
+      "middleware": [],
+      "source": "routes/v01.js:681",
+      "description": "Submit a verification task"
+    },
+    {
+      "method": "POST",
+      "path": "/api/verify",
+      "middleware": [],
+      "source": "routes/v01.js:202",
+      "description": "Run verification pipeline on current findings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workers",
+      "middleware": [],
+      "source": "routes/v01.js:389",
+      "description": "Get worker pool status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/workers/scale",
+      "middleware": [],
+      "source": "routes/v01.js:400",
+      "description": "Scale worker pool"
+    },
+    {
+      "method": "GET",
+      "path": "/api/workflow",
+      "middleware": [],
+      "source": "routes/v01.js:230",
+      "description": "Workflow analysis"
+    },
+    {
+      "method": "GET",
+      "path": "/api/yield-forecast",
+      "middleware": [],
+      "source": "routes/v08.js:53",
+      "description": "Expected bugs, severity distribution, verification rates"
+    }
+  ],
+  "duplicates": [],
+  "near_collisions": [
+    {
+      "note": "GET /api/discovery (v01.js:558) and GET /api/discovery/loop (v11.js:28) — v11 comment explicitly says: 'Was GET /api/discovery (collided with v01 discovery pipeline route). Renamed to /api/discovery/loop to avoid route ambiguity.' This was an intentional namespace fix, not an active duplicate.",
+      "routes": [
+        { "method": "GET", "path": "/api/discovery", "source": "routes/v01.js:558" },
+        { "method": "GET", "path": "/api/discovery/loop", "source": "routes/v11.js:28" }
+      ]
+    }
+  ],
+  "summary": {
+    "by_method": {
+      "GET": 80,
+      "POST": 37,
+      "PUT": 1,
+      "DELETE": 2
+    },
+    "by_middleware": {
+      "none": 87,
+      "requireAgent_only": 3,
+      "requireApiKey_only": 17,
+      "requireApiKey_and_rateLimiter": 13
+    },
+    "by_file": {
+      "routes/v01.js": 71,
+      "routes/v08.js": 5,
+      "routes/v09.js": 5,
+      "routes/v11.js": 13,
+      "routes/v12.js": 16,
+      "routes/v13.js": 10,
+      "routes/v14.js": 8,
+      "routes/v15.js": 31
+    },
+    "middleware_coverage": {
+      "total_routes": 120,
+      "unprotected": 87,
+      "protected": 33,
+      "protection_rate": "27.5%"
+    }
+  }
+}
+
