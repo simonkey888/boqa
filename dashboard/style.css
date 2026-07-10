@@ -480,3 +480,67 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Cyber Pitch — Visualizador 3D + Momentum Strip
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Layout: visualizador 3D grande a la izquierda + consola compacta a la derecha */
+.detections-layout {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr;
+  gap: 16px;
+  flex: 1;
+  min-height: 400px;
+}
+
+.cyber-pitch-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  border-color: rgba(99, 102, 241, 0.25);
+  box-shadow: 0 0 24px rgba(99, 102, 241, 0.08), inset 0 0 1px rgba(99, 102, 241, 0.4);
+}
+
+.cyber-pitch-card .card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.08), transparent);
+}
+
+.cyber-pitch-hint {
+  font-size: 9px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  opacity: 0.7;
+}
+
+.cyber-pitch-wrapper {
+  flex: 1;
+  position: relative;
+  background: radial-gradient(ellipse at center, #0a0a14 0%, #050508 100%);
+  overflow: hidden;
+  min-height: 400px;
+}
+
+#cyber-pitch-canvas {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+}
+
+#cyber-pitch-canvas:active { cursor: grabbing; }
+
+/* When stream-card is inside detections-layout, make it more compact */
+.detections-layout .stream-card {
+  min-height: auto;
+}
+

@@ -70,11 +70,24 @@
           </div>
         </div>
 
-        <!-- Consola de Eventos del Hunter -->
-        <div class="card stream-card">
-          <div class="card-header">Actividad del Agente</div>
-          <div class="event-stream" id="event-stream">
-            <div class="stream-empty">Esperando inicialización del Hunter...</div>
+        <!-- Cyber Pitch 3D + Consola compacta -->
+        <div class="detections-layout">
+          <div class="card cyber-pitch-card">
+            <div class="card-header">
+              <span>Cyber Pitch — Superficie de Ataque 3D</span>
+              <span class="cyber-pitch-hint" id="cyber-pitch-hint">Mueve el ratón para rotar</span>
+            </div>
+            <div class="cyber-pitch-wrapper">
+              <canvas id="cyber-pitch-canvas"></canvas>
+            </div>
+          </div>
+
+          <!-- Consola de Eventos del Hunter (compacta, lateral) -->
+          <div class="card stream-card">
+            <div class="card-header">Actividad del Agente</div>
+            <div class="event-stream" id="event-stream">
+              <div class="stream-empty">Esperando inicialización del Hunter...</div>
+            </div>
           </div>
         </div>
       </section>
