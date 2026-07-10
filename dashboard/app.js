@@ -75,33 +75,47 @@
     return fetch(url, { ...options, headers });
   }
 
-  // ─── WebSocket ─────────────────────────────────────────────────
+  // ─── WebSocket con tolerancia a fallos ───────────────────────────
+  //
+  // Cloudflare Workers free tier no soporta proxear WebSocket upgrades
+  // a un backend HTTP. El WS va a fallar silenciosamente, pero pollState()
+  // (HTTP polling cada 10s) asume el control del estado y mantiene el dashboard vivo.
 
   function connectWS() {
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    state.ws = new WebSocket(`${protocol}//${location.host}/ws?api_key=${encodeURIComponent(state.apiKey)}`);
+    try {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      state.ws = new WebSocket(`${protocol}//${location.host}/ws`);
 
-    state.ws.onopen = () => {
-      state.connected = true;
-      $('#srv-status').className = 'status-indicator online';
-      $('#srv-status-text').textContent = 'Conectado';
-      logEvent('api', 'Canal WebSocket establecido de forma segura.');
-    };
+      state.ws.onopen = () => {
+        state.connected = true;
+        const ind = $('#srv-status');
+        const txt = $('#srv-status-text');
+        if (ind) ind.className = 'status-indicator online';
+        if (txt) txt.textContent = 'Conectado (Tiempo Real)';
+        logEvent('api', 'Canal WebSocket establecido.');
+      };
 
-    state.ws.onclose = () => {
-      state.connected = false;
-      $('#srv-status').className = 'status-indicator';
-      $('#srv-status-text').textContent = 'Desconectado';
-      // Only auto-reconnect if we still have an API key
-      if (state.apiKey) setTimeout(connectWS, 3000);
-    };
+      state.ws.onclose = () => {
+        state.connected = false;
+        // No brickear el UI a "Desconectado" — pollState() mantiene el estado real.
+        // Reintento de WS espaciado a 10s para evitar saturación del borde.
+        setTimeout(connectWS, 10000);
+      };
 
-    state.ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        handleIncomingEvent(msg);
-      } catch (_) {}
-    };
+      state.ws.onerror = () => {
+        // Silent — WS es best-effort. pollState() es la fuente de verdad.
+      };
+
+      state.ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleIncomingEvent(msg);
+        } catch (_) {}
+      };
+    } catch (_) {
+      // WS no soportado (ej. Cloudflare Worker proxy) — silent fail.
+      // pollState() es la fuente de datos primaria de todos modos.
+    }
   }
 
   // Capturar eventos de navegación y anomalías en vivo de la IA
@@ -264,9 +278,27 @@
       state.coverage = Math.round(covRes.overall_score || 0);
       state.evidenceQuality = state.bugs.length > 0 ? 100 : 0;
 
+      // [Surgical Patch: HTTP Status Indicator Fallback]
+      // Si el fetch HTTP tiene éxito, el servidor está vivo y respondiendo.
+      // Solo cambiar el texto si WS no lo sobreescribió a "Tiempo Real".
+      state.connected = true;
+      const ind = $('#srv-status');
+      const txt = $('#srv-status-text');
+      if (ind) ind.className = 'status-indicator online';
+      if (txt && txt.textContent !== 'Conectado (Tiempo Real)') {
+        txt.textContent = 'Conectado (Sincronizado)';
+      }
+
       renderMetrics();
       renderReportTab();
-    } catch (_) {}
+    } catch (_) {
+      // Solo marcamos como desconectado si falla también el canal HTTP.
+      state.connected = false;
+      const ind = $('#srv-status');
+      const txt = $('#srv-status-text');
+      if (ind) ind.className = 'status-indicator';
+      if (txt) txt.textContent = 'Desconectado';
+    }
   }
 
   // Uptime del Servidor
@@ -304,3 +336,4 @@
 
 })();
 // version: 1783656171
+// v:1783656596177128959
