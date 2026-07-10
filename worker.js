@@ -349,6 +349,16 @@ async function proxyToBackend(request, env) {
     );
   }
 
+  // ─── API key forwarding ─────────────────────────────────────────────
+  // If the backend has BOQA_API_KEY set, every request MUST include the
+  // matching X-API-Key header. The Worker sends it from its own env var
+  // (or defaults to BOQA123 for backward compat with the demo key).
+  // If the backend has BOQA_API_KEY unset (open mode), this header is ignored.
+  const workerApiKey = env.BOQA_API_KEY || 'BOQA123';
+  if (!proxyHeaders.has('X-API-Key')) {
+    proxyHeaders.set('X-API-Key', workerApiKey);
+  }
+
   // ─── HMAC signing (defense in depth) ────────────────────────────────
   // If BOQA_HMAC_SECRET is set on the Worker, sign every proxied request.
   // The backend will reject any request without a valid signature, even if
@@ -505,3 +515,5 @@ export default {
     return new Response('BOQA Worker — no assets bound', { status: 404 });
   },
 };
+// v:1783660496950161096
+// v:1783660573911114381
