@@ -19,7 +19,7 @@ const { CONFIG, OUTPUT_DIR, SESSIONS_DIR, REPORTS_DIR } = require('./lib/config'
 
 // ─── Middleware ──────────────────────────────────────────────────────────
 
-const { createRequireAgent, errorHandler, requireApiKey, rateLimiter, verifyHmac } = require('./lib/middleware');
+const { createRequireAgent, errorHandler, requireApiKey, rateLimiter, verifyHmac, attachRawBodyCapture } = require('./lib/middleware');
 
 // ─── Engine Initialization ──────────────────────────────────────────────
 
@@ -32,7 +32,11 @@ const requireAgent = createRequireAgent(() => ctx.agent, () => ctx.agentInitErro
 // ─── Express + HTTP + WS ───────────────────────────────────────────────
 
 const app = express();
-app.use(express.json());
+// Capture raw body via express.json({ verify }) hook — this is the correct
+// way to get the exact bytes received without breaking body parsing.
+// attachRawBodyCapture() returns a config object with a verify callback that
+// stashes the raw buffer on req._rawBody for HMAC verification later.
+app.use(express.json(attachRawBodyCapture()));
 const server = http.createServer(app);
 app.use(express.static(path.join(__dirname, 'dashboard')));
 
