@@ -6,7 +6,7 @@ account_id = "b21fa81d12acb663798f9f7c51801955"
 # Backend API URL — set this to your Northflank (or other Node.js host) URL.
 # When the dashboard makes /api/* or /ws requests, they get proxied to this backend.
 [vars]
-BOQA_BACKEND_URL = ""
+BOQA_BACKEND_URL = "http://136.248.83.185.nip.io"
 
 # Static assets — the dashboard HTML/CSS/JS
 [assets]

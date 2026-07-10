@@ -16,26 +16,25 @@
   const $$ = (s) => document.querySelectorAll(s);
 
   // ─── Control de Acceso Local (Northflank Secure Guard) ───────────
+  //
+  // AUTH GATE TEMPORARILY DISABLED — direct boot.
+  // To re-enable: change AUTH_ENABLED to true below.
+  //
+  // When enabled, the gate asks for BOQA_API_KEY on first visit, validates
+  // it against /api/bugs, persists it in localStorage, and signs all
+  // subsequent requests. When disabled, the dashboard boots directly.
+  //
+  const AUTH_ENABLED = false;
 
   function verifyAccess() {
-    if (!state.apiKey) {
+    if (AUTH_ENABLED && !state.apiKey) {
       $('#auth-gate').classList.remove('hidden');
     } else {
-      // Validate the stored key silently before booting.
-      // If invalid, the gate reopens; if valid, the dashboard boots.
-      verifyApiKey(state.apiKey).then((ok) => {
-        if (ok) {
-          $('#auth-gate').classList.add('hidden');
-          connectWS();
-          pollState();
-          setInterval(pollState, 10000); // Poll cada 10s
-        } else {
-          // Stored key is stale — clear it and ask again.
-          try { localStorage.removeItem('boqa_key'); } catch (_) {}
-          state.apiKey = '';
-          $('#auth-gate').classList.remove('hidden');
-        }
-      });
+      // Auth disabled OR key already present — boot directly.
+      $('#auth-gate').classList.add('hidden');
+      connectWS();
+      pollState();
+      setInterval(pollState, 10000); // Poll cada 10s
     }
   }
 

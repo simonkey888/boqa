@@ -9,9 +9,9 @@
 
 FROM node:20-slim
 
-# Default API key — accepts "BOQA123" out of the box.
-# Override in production with: docker run -e BOQA_API_KEY=<stronger-key> ...
-ENV BOQA_API_KEY=BOQA123
+# Auth gate disabled — backend runs in open mode.
+# To re-enable: set BOQA_API_KEY env var to a non-empty string.
+# ENV BOQA_API_KEY=BOQA123   # commented out — auth disabled
 ENV BOQA_MODE=live
 ENV BOQA_AUTO_ANALYZE=true
 ENV HEADLESS=true
