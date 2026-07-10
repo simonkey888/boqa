@@ -8,8 +8,45 @@
  *    against BOQA_API_KEY (default "BOQA123") and returns mock data so the
  *    dashboard is fully browsable without a backend.
  *
+ * HMAC signing (defense in depth):
+ *  - If BOQA_HMAC_SECRET env var is set, EVERY /api/* request is signed with
+ *    HMAC-SHA256(secret, method + path + ts + body) and the signature is sent
+ *    in X-BOQA-Sig + X-BOQA-Ts headers.
+ *  - The backend rejects any unsigned request (even if it bypasses Cloudflare).
+ *  - Anti-replay: ts must be within 5min of backend time.
+ *  - Anti-timing-attack: backend uses crypto.timingSafeEqual.
+ *  - If BOQA_HMAC_SECRET is unset, no signing happens (backward compatible).
+ *
  * Architecture: User → Cloudflare Worker → (BOQA backend OR demo data)
  */
+
+// ─── HMAC signing helper ───────────────────────────────────────────────
+//
+// Uses Web Crypto API (SubtleCrypto.sign) which is available in Cloudflare
+// Workers. Returns the hex-encoded signature.
+//
+// Payload format (must match backend exactly):
+//   method (uppercase) + path (with query) + ts (string) + body (string)
+
+async function computeHmacSignature(secret, method, path, ts, bodyStr) {
+  const payload = method.toUpperCase() + path + String(ts) + bodyStr;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(payload));
+  // Convert ArrayBuffer to hex string
+  const bytes = new Uint8Array(sig);
+  let hex = '';
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, '0');
+  }
+  return hex;
+}
 
 // ─── Demo data (used when BOQA_BACKEND_URL is unset) ────────────────────
 
@@ -312,10 +349,44 @@ async function proxyToBackend(request, env) {
     );
   }
 
+  // ─── HMAC signing (defense in depth) ────────────────────────────────
+  // If BOQA_HMAC_SECRET is set on the Worker, sign every proxied request.
+  // The backend will reject any request without a valid signature, even if
+  // someone bypasses Cloudflare and hits the VPS IP directly.
+  const hmacSecret = env.BOQA_HMAC_SECRET;
+  let bodyForProxy = request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined;
+
+  if (hmacSecret) {
+    const ts = Math.floor(Date.now() / 1000);
+    // Read body for POST/PUT/PATCH — we need the raw body string to match
+    // what the backend will reconstruct.
+    let bodyStr = '';
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      try {
+        const bodyBuf = await request.arrayBuffer();
+        bodyStr = new TextDecoder().decode(bodyBuf);
+        bodyForProxy = bodyBuf;
+      } catch (_) {
+        bodyStr = '';
+      }
+    }
+    // Path with query string — must match backend's req.originalUrl exactly
+    const pathWithQuery = url.pathname + url.search;
+    const sig = await computeHmacSignature(
+      hmacSecret,
+      request.method,
+      pathWithQuery,
+      ts,
+      bodyStr
+    );
+    proxyHeaders.set('X-BOQA-Sig', sig);
+    proxyHeaders.set('X-BOQA-Ts', String(ts));
+  }
+
   const proxyReq = new Request(targetUrl, {
     method: request.method,
     headers: proxyHeaders,
-    body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
+    body: bodyForProxy,
     redirect: 'manual',
   });
 

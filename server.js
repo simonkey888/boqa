@@ -19,7 +19,7 @@ const { CONFIG, OUTPUT_DIR, SESSIONS_DIR, REPORTS_DIR } = require('./lib/config'
 
 // ─── Middleware ──────────────────────────────────────────────────────────
 
-const { createRequireAgent, errorHandler, requireApiKey, rateLimiter } = require('./lib/middleware');
+const { createRequireAgent, errorHandler, requireApiKey, rateLimiter, verifyHmac } = require('./lib/middleware');
 
 // ─── Engine Initialization ──────────────────────────────────────────────
 
@@ -50,8 +50,13 @@ ctx.wss = wss;
 ctx.server = server;
 
 // ─── URGENT-5: Global API Auth Middleware ──────────────────────────────
-// Apply rateLimiter + requireApiKey to ALL /api routes.
+// Apply verifyHmac + rateLimiter + requireApiKey to ALL /api routes.
 // Whitelist: /health, /replay/health, /runtime/metrics (diagnostic endpoints)
+//
+// HMAC verification runs FIRST — if BOQA_HMAC_SECRET is set, requests
+// without valid X-BOQA-Sig + X-BOQA-Ts headers are rejected before
+// any other middleware runs. This protects even if rateLimiter/requireApiKey
+// are disabled (defense in depth).
 const AUTH_WHITELIST = new Set(['/health', '/replay/health', '/runtime/metrics']);
 
 app.use('/api', (req, res, next) => {
@@ -60,10 +65,13 @@ app.use('/api', (req, res, next) => {
   if (AUTH_WHITELIST.has(apiPath)) {
     return next();
   }
-  // Apply rate limiter first, then API key check
-  rateLimiter(req, res, (err) => {
+  // HMAC first (no-op if BOQA_HMAC_SECRET unset), then rate limiter, then API key
+  verifyHmac(req, res, (err) => {
     if (err) return next(err);
-    requireApiKey(req, res, next);
+    rateLimiter(req, res, (err2) => {
+      if (err2) return next(err2);
+      requireApiKey(req, res, next);
+    });
   });
 });
 
