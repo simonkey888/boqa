@@ -3,12 +3,9 @@ main = "worker.js"
 compatibility_date = "2024-12-01"
 account_id = "b21fa81d12acb663798f9f7c51801955"
 
-# Backend API URL — set this to your Northflank (or other Node.js host) URL.
-# When the dashboard makes /api/* or /ws requests, they get proxied to this backend.
 [vars]
-BOQA_BACKEND_URL = "http://136.248.83.185.nip.io"
+BOQA_BACKEND_URL = "http://136.248.117.15.nip.io"
 
-# Static assets — the dashboard HTML/CSS/JS
 [assets]
 directory = "./dashboard"
 binding = "ASSETS"
