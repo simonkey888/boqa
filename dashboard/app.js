@@ -8,8 +8,8 @@
     selectedBugId: null,
     coverage: 0,
     evidenceQuality: 0,
-    uptimeStart: Date.now(),
-    apiKey: localStorage.getItem('boqa_key') || ''
+    serverUptimeMs: 0,
+    uptimeObservedAt: 0
   };
 
   const $ = (s) => document.querySelector(s);
@@ -22,57 +22,22 @@
   // To re-enable: revert this function to check state.apiKey and show modal.
   //
   function verifyAccess() {
-    // Force-hide the modal without checking any key.
-    $('#auth-gate').classList.add('hidden');
-
     // Connect the Hunter streams in the background.
     connectWS();
     pollState();
     setInterval(pollState, 10000); // Poll cada 10s
   }
 
-  // Verify a candidate key against a protected endpoint.
-  // /api/health is whitelisted (returns 200 regardless of key) — we use
-  // /api/bugs which IS protected by requireApiKey, so 200/404/503 = key OK,
-  // 401/403 = key rejected.
-  async function verifyApiKey(candidate) {
-    try {
-      const res = await fetch('/api/bugs', { headers: { 'X-API-Key': candidate } });
-      return res.status === 200 || res.status === 404 || res.status === 503;
-    } catch (_) {
-      return false;
-    }
+  // Browser requests never contain backend credentials. The Worker replaces
+  // authentication headers and signs the upstream request server-side.
+  async function authenticatedFetch(url, options = {}) {
+    return fetch(url, options);
   }
 
-  $('#auth-gate-btn').addEventListener('click', async () => {
-    const inputVal = $('#auth-gate-input').value.trim();
-    if (!inputVal) return;
-
-    const ok = await verifyApiKey(inputVal);
-    if (ok) {
-      state.apiKey = inputVal;
-      try { localStorage.setItem('boqa_key', inputVal); } catch (_) {}
-      verifyAccess();
-    } else {
-      $('#auth-gate-error').classList.remove('hidden');
-    }
-  });
-
-  // Enter key submits the auth gate
-  $('#auth-gate-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      $('#auth-gate-btn').click();
-    }
-  });
-
-  // Fetch con Cabecera API Key
-  async function authenticatedFetch(url, options = {}) {
-    const headers = {
-      ...options.headers,
-      'X-API-Key': state.apiKey
-    };
-    return fetch(url, { ...options, headers });
+  async function fetchJson(url) {
+    const response = await authenticatedFetch(url);
+    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+    return response.json();
   }
 
   // ─── WebSocket con tolerancia a fallos ───────────────────────────
@@ -262,9 +227,11 @@
 
   async function pollState() {
     try {
-      const [bugsRes, covRes] = await Promise.all([
-        authenticatedFetch('/api/bugs').then(r => r.json()).catch(() => ({ bugs: [] })),
-        authenticatedFetch('/api/coverage').then(r => r.json()).catch(() => ({ overall_score: 0 }))
+      const [bugsRes, healthRes, metricsRes, covResult] = await Promise.all([
+        fetchJson('/api/bugs'),
+        fetchJson('/api/health'),
+        fetchJson('/api/runtime/metrics'),
+        fetchJson('/api/coverage').then(value => ({ ok: true, value })).catch(error => ({ ok: false, error }))
       ]);
 
       const newBugs = bugsRes.bugs || [];
@@ -275,8 +242,16 @@
         }
       }
       state.bugs = newBugs;
-      state.coverage = Math.round(covRes.overall_score || 0);
+      if (covResult.ok) state.coverage = Math.round(covResult.value.overall_score || 0);
       state.evidenceQuality = state.bugs.length > 0 ? 100 : 0;
+      state.serverUptimeMs = Number(healthRes.server_uptime_ms ?? metricsRes.metrics?.uptime_ms ?? 0);
+      state.uptimeObservedAt = Date.now();
+      $('#status-worker').textContent = 'Worker: conectado';
+      $('#status-backend').textContent = `Backend: ${healthRes.status === 'ok' ? 'saludable' : healthRes.status}`;
+      $('#status-hunter').textContent = `Hunter: ${healthRes.agent_available ? 'activo' : 'inactivo'}`;
+      const replay = metricsRes.metrics?.replay;
+      $('#status-replay').textContent = `Replay: ${replay ? `operativo (${replay.successes || 0}/${replay.attempts || 0})` : 'sin métricas'}`;
+      $('#status-findings').textContent = `Findings pendientes: ${bugsRes.summary?.findings_pending ?? 'no informado'} · Bugs reportados: ${bugsRes.total ?? newBugs.length}`;
 
       // [Surgical Patch: HTTP Status Indicator Fallback]
       // Si el fetch HTTP tiene éxito, el servidor está vivo y respondiendo.
@@ -303,7 +278,7 @@
 
   // Uptime del Servidor
   setInterval(() => {
-    const elapsed = Date.now() - state.uptimeStart;
+    const elapsed = state.serverUptimeMs + (state.uptimeObservedAt ? Date.now() - state.uptimeObservedAt : 0);
     const s = Math.floor(elapsed / 1000);
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);

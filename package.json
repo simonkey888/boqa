@@ -30,7 +30,8 @@
     "uncertainty": "curl http://localhost:7070/api/uncertainty",
     "counterfactual": "curl http://localhost:7070/api/counterfactual",
     "stability": "curl http://localhost:7070/api/stability",
-    "alignment": "curl http://localhost:7070/api/alignment"
+    "alignment": "curl http://localhost:7070/api/alignment",
+    "test:dashboard": "node test/test-dashboard-smoke.js"
   },
   "keywords": [
     "observability",
@@ -59,4 +60,3 @@
     "ws": "^8.16.0"
   }
 }
-
