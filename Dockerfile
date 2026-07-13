@@ -40,6 +40,13 @@ RUN groupadd -r boqa && useradd -r -g boqa -d /app -s /sbin/nologin boqa
 # Set working directory
 WORKDIR /app
 
+# FASE K (revised): Install Chromium to a path visible to the runtime user.
+# Without PLAYWRIGHT_BROWSERS_PATH=0, Playwright installs to ~/.cache/ms-playwright
+# of the building user (root), which is NOT visible to the runtime user (boqa).
+# Setting PLAYWRIGHT_BROWSERS_PATH=0 installs into node_modules/playwright-core/.local-browsers
+# which is shared across all users running code from /app.
+ENV PLAYWRIGHT_BROWSERS_PATH=0
+
 # Copy package files and install dependencies
 COPY package.json package-lock.json ./
 RUN npm ci --production && \
