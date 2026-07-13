@@ -28,12 +28,14 @@ function registerRoutes(app, ctx, middleware, pipelines) {
   const persistence = new Persistence();
   const targetRegistry = new TargetRegistry();
 
-  // Helper: get current canonical store (refreshed each request to reflect
-  // in-memory state if the engine is running)
+  // Helper: get current canonical store
+  // Priority: in-memory store IF it has bugs, otherwise load from persistence
   function getStore() {
     if (ctx.verificationEngine && ctx.verificationEngine.canonicalStore) {
-      return ctx.verificationEngine.canonicalStore;
+      const memStore = ctx.verificationEngine.canonicalStore;
+      if (memStore.size() > 0) return memStore;
     }
+    // Fall back to persisted store (loaded from output/canonical/bugs.json)
     return persistence.loadCanonicalStore();
   }
 
