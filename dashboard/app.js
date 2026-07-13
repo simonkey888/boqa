@@ -237,9 +237,10 @@
 
       // FASE 11 — Separate bugs by quality_status
       const allBugs = bugsRes.bugs || [];
-      const reportableBugs  = allBugs.filter(b => b.quality_status === 'reportable');
-      const needsReviewBugs = allBugs.filter(b => b.quality_status === 'needs_review');
-      const rejectedBugs    = allBugs.filter(b => b.quality_status === 'rejected');
+      const reportableBugs  = allBugs.filter(b => b.reportability_status === 'reportable' || b.quality_status === 'reportable');
+      const needsReviewBugs = allBugs.filter(b => b.technical_status === 'needs_review');
+      const blockedScopeBugs = allBugs.filter(b => b.reportability_status === 'blocked_scope' || b.quality_status === 'blocked_scope');
+      const rejectedBugs    = allBugs.filter(b => b.technical_status === 'rejected');
 
       // Log only NEW reportable bugs
       for (const bug of reportableBugs) {
@@ -275,7 +276,9 @@
       const usd = portfolio?.estimated_value_usd;
       $('#status-findings').textContent =
         `Reportables: ${summary.reportable ?? reportableBugs.length} · ` +
-        `En revisión: ${summary.needs_review ?? needsReviewBugs.length} · ` +
+        `En revisión: ${summary.technical?.needs_review ?? summary.technical_needs_review ?? needsReviewBugs.length} · ` +
+        `Bloqueados (scope): ${summary.blocked_scope ?? summary.reportability?.blocked_scope ?? blockedScopeBugs.length} · ` +
+        `Rechazados: ${summary.technical?.rejected ?? summary.technical_rejected ?? rejectedBugs.length} · ` +
         `Observaciones crudas: ${summary.raw_observations ?? allBugs.length}` +
         (usd && usd.typical > 0 ? ` · USD típico: $${usd.typical}` : '');
 

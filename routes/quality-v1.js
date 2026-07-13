@@ -79,10 +79,15 @@ function registerRoutes(app, ctx, middleware, pipelines) {
 
   function buildSummary(store) {
     const all = store.all();
-    const reportable  = all.filter(b => b.quality_status === 'reportable');
-    const needsReview = all.filter(b => b.quality_status === 'needs_review');
-    const rejected    = all.filter(b => b.quality_status === 'rejected');
-    const disclosed   = all.filter(b => b.quality_status === 'disclosed');
+    // GATE K: filter by BOTH axes
+    const reportable  = all.filter(b => b.reportability_status === 'reportable' || b.quality_status === 'reportable');
+    const needsReview = all.filter(b => b.technical_status === 'needs_review');
+    const rejected    = all.filter(b => b.technical_status === 'rejected');
+    const disclosed   = all.filter(b => b.reportability_status === 'disclosed' || b.quality_status === 'disclosed');
+    const blockedScope = all.filter(b => b.reportability_status === 'blocked_scope' || b.quality_status === 'blocked_scope');
+    const blockedEvidence = all.filter(b => b.reportability_status === 'blocked_evidence');
+    const blockedProgramRules = all.filter(b => b.reportability_status === 'blocked_program_rules');
+    const notReportable = all.filter(b => b.reportability_status === 'not_reportable');
 
     const portfolio = estimatePortfolio(all, targetRegistry.all());
 
@@ -92,9 +97,16 @@ function registerRoutes(app, ctx, middleware, pipelines) {
       ? Math.round((1 - (uniqueCandidates / rawObs)) * 100)
       : 0;
 
+    // Count bounty nulls
+    const bountyNull = all.filter(b => {
+      const eb = b.estimated_bounty_usd;
+      return !eb || eb.typical === null || eb.typical === undefined;
+    }).length;
+
     return {
       raw_observations: rawObs,
       unique_candidates: uniqueCandidates,
+      // Legacy fields (backward-compat)
       confirmed: all.filter(b => b.lifecycle_status === 'confirmed').length,
       reportable: reportable.length,
       needs_review: needsReview.length,
@@ -102,6 +114,33 @@ function registerRoutes(app, ctx, middleware, pipelines) {
       disclosed: disclosed.length,
       duplicate_reduction_pct: duplicateReductionPct,
       estimated_value_usd: portfolio.estimated_value_usd,
+      // GATE K: two-axis summary
+      technical: {
+        candidate: all.filter(b => b.technical_status === 'candidate').length,
+        validating: all.filter(b => b.technical_status === 'validating').length,
+        confirmed: all.filter(b => b.technical_status === 'confirmed').length,
+        needs_review: needsReview.length,
+        rejected: rejected.length,
+      },
+      reportability: {
+        reportable: reportable.length,
+        blocked_scope: blockedScope.length,
+        blocked_evidence: blockedEvidence.length,
+        blocked_program_rules: blockedProgramRules.length,
+        duplicate_risk: all.filter(b => b.reportability_status === 'blocked_duplicate_risk').length,
+        not_reportable: notReportable.length,
+      },
+      bounty: {
+        estimated: all.filter(b => {
+          const eb = b.estimated_bounty_usd;
+          return eb && eb.typical !== null && eb.typical > 0;
+        }).length,
+        null: bountyNull,
+      },
+      // Also expose flat fields for backward-compat
+      blocked_scope: blockedScope.length,
+      technical_needs_review: needsReview.length,
+      technical_rejected: rejected.length,
     };
   }
 
@@ -249,7 +288,10 @@ function _publicBugView(b) {
     title: b.title,
     severity: b.severity,
     confidence: b.confidence,
-    quality_status: b.quality_status,
+    // GATE K: expose both axes explicitly
+    technical_status: b.technical_status || null,
+    reportability_status: b.reportability_status || b.quality_status || null,
+    quality_status: b.quality_status,  // backward-compat
     lifecycle_status: b.lifecycle_status,
     observation_count: b.observation_count,
     session_count: b.session_count,
@@ -259,6 +301,7 @@ function _publicBugView(b) {
     affected_endpoints: b.affected_endpoints,
     evidence_quality: b.evidence_quality,
     estimated_bounty_usd: b.estimated_bounty_usd,
+    target_resolution_source: b.target_resolution_source || (b.reportability && b.reportability.category_rule && b.reportability.category_rule.notes ? null : null),
     reportability: b.reportability ? {
       status: b.reportability.status,
       confidence: b.reportability.confidence,
