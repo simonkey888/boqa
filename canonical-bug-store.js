@@ -45,6 +45,44 @@ const TERMINAL_STATUSES = Object.freeze(new Set([
   LIFECYCLE_STATUS.DISCLOSED,
 ]));
 
+// ─── FASE 2 (revised): Technical vs Reportability axes ──────────────────
+//
+// technical_status: tracks whether the bug is technically real
+//   candidate    → just observed, unverified
+//   validating   → in verification rounds
+//   confirmed    → reproduced with sufficient evidence
+//   needs_review → inconclusive (e.g., 1/3 reproductions, missing detector)
+//   rejected     → DEMONSTRATED false positive / benign / non-reproducible
+//
+// reportability_status: tracks whether the bug can be reported to a program
+//   reportable         → passes ALL 8 gates (incl. scope + confidence >= 90)
+//   blocked_scope      → target not authorized (technical_status preserved)
+//   blocked_evidence   → insufficient evidence (≠ false positive)
+//   blocked_program_rules → category/method out of program scope
+//   blocked_duplicate_risk → likely duplicate of known issue
+//   not_reportable     → catch-all for other blockers
+//
+// IMPORTANT: blocked_scope NEVER implies technical rejected. A bug can be
+// technically confirmed but un-reportable because the target lacks a
+// verified bug bounty program. Conversely, a bug can be rejected as a
+// false positive even on an authorized target.
+const TECHNICAL_STATUS = Object.freeze({
+  CANDIDATE:    'candidate',
+  VALIDATING:   'validating',
+  CONFIRMED:    'confirmed',
+  NEEDS_REVIEW: 'needs_review',
+  REJECTED:     'rejected',
+});
+
+const REPORTABILITY_STATUS = Object.freeze({
+  REPORTABLE:             'reportable',
+  BLOCKED_SCOPE:          'blocked_scope',
+  BLOCKED_EVIDENCE:       'blocked_evidence',
+  BLOCKED_PROGRAM_RULES:  'blocked_program_rules',
+  BLOCKED_DUPLICATE_RISK: 'blocked_duplicate_risk',
+  NOT_REPORTABLE:         'not_reportable',
+});
+
 // ─── Normalizers (PURE functions) ───────────────────────────────────────
 
 function normalizeOrigin(url) {
@@ -204,7 +242,12 @@ function createCanonicalBug(bug, target, fingerprintResult) {
     cookie_name: normalizeCookieName(bug.cookie_name),
     title: bug.title || `${bug.category} on ${bug.endpoint || bug.path || target.url}`,
 
+    // FASE 2 (revised): two independent axes
     lifecycle_status: LIFECYCLE_STATUS.CANONICAL,
+    technical_status: TECHNICAL_STATUS.CANDIDATE,    // set by VerificationEngine
+    reportability_status: null,                       // set by ReportabilityEngine
+    // Backward-compat alias: quality_status mirrors reportability_status for
+    // existing API consumers. New code should read reportability_status directly.
     quality_status: null,
 
     severity: String(bug.severity || 'medium').toLowerCase(),
@@ -348,9 +391,36 @@ class CanonicalBugStore {
     return this.all().filter(b => b.target_id === targetId);
   }
 
+  /**
+   * Filter by reportability_status (preferred) OR technical_status.
+   * For backward-compat, accepts: 'all', 'reportable', 'needs_review',
+   * 'rejected', 'blocked_scope', 'blocked_evidence', 'blocked_program_rules',
+   * 'blocked_duplicate_risk', 'not_reportable', 'disclosed',
+   * OR any technical_status value ('confirmed', 'candidate', etc.).
+   */
   by_quality_status(status) {
     if (!status || status === 'all') return this.all();
-    return this.all().filter(b => b.quality_status === status);
+    return this.all().filter(b =>
+      b.reportability_status === status ||
+      b.quality_status === status ||  // backward-compat
+      b.technical_status === status
+    );
+  }
+
+  /**
+   * Filter strictly by technical_status.
+   */
+  by_technical_status(status) {
+    if (!status || status === 'all') return this.all();
+    return this.all().filter(b => b.technical_status === status);
+  }
+
+  /**
+   * Filter strictly by reportability_status.
+   */
+  by_reportability_status(status) {
+    if (!status || status === 'all') return this.all();
+    return this.all().filter(b => b.reportability_status === status);
   }
 
   size() { return this.bugs.size; }
@@ -379,6 +449,8 @@ class CanonicalBugStore {
 module.exports = {
   LIFECYCLE_STATUS,
   TERMINAL_STATUSES,
+  TECHNICAL_STATUS,
+  REPORTABILITY_STATUS,
   normalizeOrigin,
   normalizePath,
   normalizeCategory,

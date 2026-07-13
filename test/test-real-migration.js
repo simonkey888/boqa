@@ -73,11 +73,34 @@ function runMigration(outputDir) {
     '--dry-run',
   ];
   const stdout = execFileSync('node', args, { cwd: '/home/z/my-project/boqa-dev' }).toString();
-  // Parse the JSON report at the end (after the [migrate] stderr lines, look for second JSON block)
-  const jsonStart = stdout.lastIndexOf('{');
-  const jsonEnd = stdout.lastIndexOf('}');
-  if (jsonStart < 0 || jsonEnd < 0) throw new Error('could not parse JSON from migration output');
-  return JSON.parse(stdout.substring(jsonStart, jsonEnd + 1));
+  // The script prints TWO JSON blocks (one to stderr via console.error, one to stdout
+  // via console.log). Find the LAST { ... } block which is the stdout one.
+  const lines = stdout.split('\n');
+  let jsonStr = null;
+  let braceDepth = 0;
+  let jsonStart = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trimStart().startsWith('{')) {
+      jsonStart = i;
+      braceDepth = 0;
+      // Find the matching closing brace from this point
+      for (let j = i; j < lines.length; j++) {
+        const l = lines[j];
+        for (const ch of l) {
+          if (ch === '{') braceDepth++;
+          else if (ch === '}') braceDepth--;
+        }
+        if (braceDepth === 0 && j >= jsonStart) {
+          jsonStr = lines.slice(jsonStart, j + 1).join('\n');
+          break;
+        }
+      }
+      if (jsonStr) break;  // take the first complete JSON block
+    }
+  }
+  if (!jsonStr) throw new Error('could not parse JSON from migration output:\n' + stdout);
+  return JSON.parse(jsonStr);
 }
 
 test('1. migration produces expected counts on real input', () => {
@@ -85,6 +108,8 @@ test('1. migration produces expected counts on real input', () => {
   assertEq(out1.raw_observations, 341, 'raw_observations should be 341');
   assertEq(out1.unique_candidates, 5, 'unique_candidates should be 5 (matches original 5 titles)');
   assertEq(out1.reportable, 0, 'reportable should be 0 (no authorized target)');
+  assertEq(out1.blocked_scope, 5, 'blocked_scope should be 5 (target pending_verification, not rejected)');
+  assertEq(out1.technical_rejected, 0, 'technical_rejected should be 0 (no demonstrated false positives)');
   assertEq(out1.duplicate_reduction_pct, 99, 'duplicate_reduction_pct should be 99');
 });
 

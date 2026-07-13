@@ -306,6 +306,24 @@ function applyCategoryRules(bug, target, context = {}) {
 
 // ─── Main entry: evaluate a bug ──────────────────────────────────────────
 
+/**
+ * FASE 2 (revised): evaluateReportability now returns TWO independent statuses:
+ *   - technical_status: candidate | validating | confirmed | needs_review | rejected
+ *   - reportability_status: reportable | blocked_scope | blocked_evidence |
+ *                            blocked_program_rules | blocked_duplicate_risk |
+ *                            not_reportable
+ *
+ * Rules:
+ *   - If GATE_1 (scope) fails → reportability_status = 'blocked_scope'.
+ *     technical_status is determined by OTHER gates (NOT auto-rejected).
+ *   - If GATE_3 (evidence) fails → reportability_status = 'blocked_evidence'
+ *     UNLESS scope also failed (then scope takes precedence).
+ *   - Category rules that return 'rejected' represent DEMONSTRATED false
+ *     positives → technical_status = 'rejected'.
+ *   - Category rules that return 'needs_review' → technical_status = 'needs_review'.
+ *   - Only when ALL gates pass + confidence >= 90 + category rule OK
+ *     → technical_status = 'confirmed' AND reportability_status = 'reportable'.
+ */
 function evaluateReportability(bug, target, context = {}) {
   if (!bug) throw new Error('evaluateReportability: bug required');
   if (!target) throw new Error('evaluateReportability: target required');
@@ -331,7 +349,6 @@ function evaluateReportability(bug, target, context = {}) {
 
   for (const [name, result] of Object.entries(gates)) {
     if (!result.passed) {
-      // GATE 7 has soft fail (needs_review instead of rejected)
       if (!result.soft) {
         failed_gates.push(name);
       } else {
@@ -341,37 +358,89 @@ function evaluateReportability(bug, target, context = {}) {
     }
   }
 
-  // Apply category-specific rules
+  // Apply category-specific rules (these can DEMONSTRATE false positive)
   const catRule = applyCategoryRules(bug, target, context);
   if (catRule.notes?.length) reviewer_notes.push(...catRule.notes);
 
-  // Determine final status
-  let status;
-  if (catRule.status === 'rejected' || failed_gates.length > 0) {
-    // If GATE 7 was the only failure and it was soft → needs_review
-    const onlySoftGate7 = failed_gates.length === 0 &&
-                          gates.GATE_7_CONFIDENCE && !gates.GATE_7_CONFIDENCE.passed && gates.GATE_7_CONFIDENCE.soft;
-    if (catRule.status === 'rejected') {
-      status = 'rejected';
-    } else if (onlySoftGate7 && failed_gates.length === 0) {
-      status = 'needs_review';
-    } else {
-      status = 'rejected';
-    }
-  } else if (gates.GATE_7_CONFIDENCE && !gates.GATE_7_CONFIDENCE.passed && gates.GATE_7_CONFIDENCE.soft) {
-    status = 'needs_review';
+  // ─── Determine TECHNICAL status (independent of scope) ───────────────
+  // Start from bug's existing technical_status or default to candidate
+  let technical_status = bug.technical_status || 'candidate';
+
+  // Category rules can DEMONSTRATE false positive → rejected
+  if (catRule.status === 'rejected') {
+    technical_status = 'rejected';
   } else if (catRule.status === 'needs_review') {
-    status = 'needs_review';
+    technical_status = 'needs_review';
   } else {
-    status = 'reportable';
+    // Use GATE failures (excluding GATE_1 scope) to determine technical status
+    const technicalFailures = failed_gates.filter(g => g !== 'GATE_1_AUTHORIZED_SCOPE' && g !== 'GATE_6_PROGRAM_RULES');
+
+    if (technicalFailures.length === 0) {
+      // No technical failures. Check confidence (GATE 7) soft fail
+      if (gates.GATE_7_CONFIDENCE && !gates.GATE_7_CONFIDENCE.passed && gates.GATE_7_CONFIDENCE.soft) {
+        technical_status = 'needs_review';
+      } else if (gates.GATE_7_CONFIDENCE && gates.GATE_7_CONFIDENCE.passed) {
+        // All technical gates pass + confidence >= 90 → confirmed
+        technical_status = 'confirmed';
+      } else {
+        technical_status = 'needs_review';
+      }
+    } else if (technicalFailures.includes('GATE_2_REPRODUCIBILITY')) {
+      // Could not reproduce — but that's "inconclusive", not "demonstrated false positive"
+      technical_status = 'needs_review';
+    } else if (technicalFailures.includes('GATE_3_EVIDENCE')) {
+      technical_status = 'needs_review';
+    } else if (technicalFailures.includes('GATE_4_IMPACT')) {
+      // Best-practice missing alone → not a real bug, but not a demonstrated FP either
+      technical_status = 'needs_review';
+    } else if (technicalFailures.includes('GATE_5_EXPLOITABILITY')) {
+      technical_status = 'needs_review';
+    } else {
+      technical_status = 'needs_review';
+    }
   }
 
-  // Final confidence threshold enforcement
-  if (status === 'reportable' && conf.score < 90) status = 'needs_review';
-  if (status === 'needs_review' && conf.score < 70) status = 'rejected';
+  // ─── Determine REPORTABILITY status (depends on scope) ───────────────
+  let reportability_status;
+
+  if (gates.GATE_1_AUTHORIZED_SCOPE && !gates.GATE_1_AUTHORIZED_SCOPE.passed) {
+    // Scope not authorized → blocked_scope (regardless of technical merit)
+    reportability_status = 'blocked_scope';
+  } else if (failed_gates.includes('GATE_6_PROGRAM_RULES')) {
+    reportability_status = 'blocked_program_rules';
+  } else if (technical_status === 'rejected') {
+    // Demonstrated false positive → not_reportable
+    reportability_status = 'not_reportable';
+  } else if (failed_gates.includes('GATE_3_EVIDENCE')) {
+    reportability_status = 'blocked_evidence';
+  } else if (technical_status === 'needs_review') {
+    // Needs review but on authorized target → blocked_evidence (insufficient proof)
+    reportability_status = 'blocked_evidence';
+  } else if (technical_status === 'confirmed' && conf.score >= 90) {
+    // All gates pass + confirmed + high confidence → reportable
+    reportability_status = 'reportable';
+  } else if (technical_status === 'confirmed' && conf.score >= 70) {
+    // Confirmed but confidence < 90 → still blocked_evidence (not enough for reportable)
+    reportability_status = 'blocked_evidence';
+  } else {
+    reportability_status = 'not_reportable';
+  }
+
+  // Final confidence threshold enforcement for reportable
+  if (reportability_status === 'reportable' && conf.score < 90) {
+    reportability_status = 'blocked_evidence';
+  }
+
+  // Backward-compat: quality_status mirrors reportability_status
+  // for existing API consumers. Some old code reads 'rejected' as
+  // "not reportable" — map accordingly.
+  const quality_status = reportability_status;
 
   return {
-    status,
+    status: reportability_status,  // backward-compat
+    technical_status,
+    reportability_status,
+    quality_status,  // backward-compat alias
     confidence: conf.score,
     confidence_components: conf.components,
     penalties_applied: conf.penalties,

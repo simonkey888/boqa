@@ -66,7 +66,8 @@ function estimateBounty(bug, target, reportability) {
   if (!bug) throw new Error('estimateBounty: bug required');
   if (!target) throw new Error('estimateBounty: target required');
 
-  const status = reportability?.status || bug.quality_status || 'needs_review';
+  // FASE 2 (revised): use reportability_status when available
+  const status = reportability?.reportability_status || reportability?.status || bug.quality_status || 'needs_review';
   const severity = String(bug.severity || 'informational').toLowerCase();
   const verifiedProgram = !!(target.authorization_status === 'authorized' && target.program_name);
   const duplicateRisk = reportability?.confidence_components?.novelty !== undefined
@@ -74,7 +75,21 @@ function estimateBounty(bug, target, reportability) {
        : reportability.confidence_components.novelty < 5 ? 'medium' : 'low')
     : 'low';
 
-  // If not reportable → all zeros
+  // FASE 2 (revised): blocked_scope → bounty = null (no program to pay)
+  // This is DIFFERENT from rejected/not_reportable which is $0 (bug is false positive).
+  // blocked_scope means the bug may be real but we cannot estimate without an authorized program.
+  if (status === 'blocked_scope') {
+    return {
+      currency: 'USD',
+      min: null, typical: null, max: null,
+      confidence: reportability?.confidence || 0,
+      basis: 'blocked_scope_no_authorized_program',
+      disclaimer: 'Sin programa de recompensas verificado para este target.',
+      label: 'Sin programa de recompensas verificado',
+    };
+  }
+
+  // If not reportable → all zeros (demonstrated false positive)
   if (status !== 'reportable') {
     return {
       currency: 'USD',

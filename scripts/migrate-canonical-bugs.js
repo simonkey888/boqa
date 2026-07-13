@@ -187,6 +187,11 @@ function main() {
   const reportable = [];
   const needsReview = [];
   const rejected = [];
+  // FASE 2 (revised): new blocked_* buckets
+  const blockedScope = [];
+  const blockedEvidence = [];
+  const blockedProgramRules = [];
+  const blockedDuplicateRisk = [];
 
   for (const bug of store.all()) {
     const target = targetMap.get(bug.target_id) || targets[0];
@@ -224,16 +229,33 @@ function main() {
     };
 
     const reportability = evaluateReportability(bug, target, context);
-    bug.quality_status = reportability.status;
+    // FASE 2 (revised): two independent axes
+    bug.technical_status = reportability.technical_status;
+    bug.reportability_status = reportability.reportability_status;
+    bug.quality_status = reportability.quality_status;  // backward-compat
     bug.reportability = reportability;
 
-    // Estimate bounty
+    // Estimate bounty — null for blocked_scope (no program to pay)
     const bounty = estimateBounty(bug, target, reportability);
     bug.estimated_bounty_usd = bounty;
 
-    if (reportability.status === 'reportable') {
+    // Bucket by REPORTABILITY status (preferred over technical for migration report)
+    const rs = reportability.reportability_status;
+    if (rs === 'reportable') {
       reportable.push(bug);
-    } else if (reportability.status === 'needs_review') {
+    } else if (rs === 'blocked_scope') {
+      blockedScope.push(bug);
+    } else if (rs === 'blocked_evidence') {
+      blockedEvidence.push(bug);
+    } else if (rs === 'blocked_program_rules') {
+      blockedProgramRules.push(bug);
+    } else if (rs === 'blocked_duplicate_risk') {
+      blockedDuplicateRisk.push(bug);
+    } else if (rs === 'not_reportable') {
+      // not_reportable = demonstrated false positive
+      rejected.push(bug);
+    } else if (rs === 'needs_review') {
+      // backward-compat: legacy needs_review
       needsReview.push(bug);
     } else {
       rejected.push(bug);
@@ -247,6 +269,24 @@ function main() {
     ? Math.round((1 - (uniqueCount / rawCount)) * 100)
     : 0;
 
+  // FASE 2 (revised): technical_summary + reportability_summary as separate axes
+  const allBugs = store.all();
+  const technical_summary = {
+    candidate:    allBugs.filter(b => b.technical_status === 'candidate').length,
+    validating:   allBugs.filter(b => b.technical_status === 'validating').length,
+    confirmed:    allBugs.filter(b => b.technical_status === 'confirmed').length,
+    needs_review: allBugs.filter(b => b.technical_status === 'needs_review').length,
+    rejected:     allBugs.filter(b => b.technical_status === 'rejected').length,
+  };
+  const reportability_summary = {
+    reportable:             reportable.length,
+    blocked_scope:          blockedScope.length,
+    blocked_evidence:       blockedEvidence.length,
+    blocked_program_rules:  blockedProgramRules.length,
+    blocked_duplicate_risk: blockedDuplicateRisk.length,
+    not_reportable:         rejected.length,
+  };
+
   const report = {
     migration_at: new Date().toISOString(),
     dry_run: DRY_RUN,
@@ -255,12 +295,24 @@ function main() {
     targets_loaded: targets.length,
     raw_observations: rawCount,
     unique_candidates: uniqueCount,
+    // Legacy fields (kept for backward-compat with old API consumers)
     confirmed: store.all().filter(b => b.lifecycle_status === LIFECYCLE_STATUS.CONFIRMED).length,
     reportable: reportable.length,
     needs_review: needsReview.length,
     rejected: rejected.length,
+    // FASE 2 (revised): two-axis summary
+    technical_summary,
+    reportability_summary,
+    // Detailed counts
+    technical_confirmed:     technical_summary.confirmed,
+    technical_needs_review:  technical_summary.needs_review,
+    technical_rejected:      technical_summary.rejected,
+    blocked_scope:           blockedScope.length,
+    blocked_evidence:        blockedEvidence.length,
+    blocked_program_rules:   blockedProgramRules.length,
+    blocked_duplicate_risk:  blockedDuplicateRisk.length,
     duplicate_reduction_pct: duplicateReductionPct,
-    note: 'Historical bugs were re-evaluated with the new reportability gates. None are auto-marked reportable without passing all 8 gates.',
+    note: 'Bugs are classified on TWO independent axes: technical_status (is the bug real?) and reportability_status (can we report it?). Lack of scope authorization yields blocked_scope, NOT rejected — the bug may still be technically valid.',
   };
 
   console.error(JSON.stringify(report, null, 2));
