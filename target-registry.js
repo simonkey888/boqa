@@ -128,6 +128,7 @@ class TargetRegistry {
       authorization_source:       authStatus === 'authorized' ? spec.authorization_source       : null,
       authorization_source_url:   authStatus === 'authorized' ? spec.authorization_source_url   : null,
       authorization_checked_at:   authStatus === 'authorized' ? spec.authorization_checked_at   : null,
+      execution_authorized:       authStatus === 'authorized' ? (spec.execution_authorized !== false) : false,
       program_name: spec.program_name || '',
       program_url:  spec.program_url  || '',
       scope_snapshot_at:   spec.scope_snapshot_at   || Date.now(),
