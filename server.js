@@ -83,6 +83,7 @@ app.use('/api', (req, res, next) => {
 
 const middleware = { requireAgent, requireApiKey, rateLimiter };
 
+require('./routes/quality-v1').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v01').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v08').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v09').registerRoutes(app, ctx, middleware, pipelines);
