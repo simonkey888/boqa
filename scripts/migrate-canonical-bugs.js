@@ -65,6 +65,12 @@ function readJsonFiles(dir) {
 }
 
 // ─── Load existing target registry if present ───────────────────────────
+// Supports 3 formats found in production:
+//   1. Array:        [{ "id": "target-a", ... }]
+//   2. Object:       { "targets": [{ "id": "target-a", ... }] }
+//   3. Keyed object: { "target-a": { "id": "target-a", ... } }
+// Also accepts { "version": "...", "targets": [...] } (production format).
+// Invalid format → fail closed (return [] → no targets executable).
 function loadTargets() {
   const targetsFile = path.resolve(__dirname, '..', 'output', 'targets', 'targets.json');
   if (!fs.existsSync(targetsFile)) {
@@ -94,11 +100,40 @@ function loadTargets() {
       enabled: false,
     }];
   }
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(targetsFile, 'utf-8'));
-  } catch {
+    raw = JSON.parse(fs.readFileSync(targetsFile, 'utf-8'));
+  } catch (e) {
+    console.error(`[migrate] WARNING: targets.json is invalid JSON — failing closed: ${e.message}`);
     return [];
   }
+
+  // Format 1: Array
+  if (Array.isArray(raw)) {
+    return raw.filter(t => t && t.id);
+  }
+
+  // Format 2: { targets: [...] }
+  if (raw && typeof raw === 'object' && Array.isArray(raw.targets)) {
+    return raw.targets.filter(t => t && t.id);
+  }
+
+  // Format 3: keyed object { "target-id": { id: "target-id", ... } }
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    // Check if values look like target objects (have 'id' or 'url' or 'base_url')
+    const values = Object.values(raw);
+    if (values.length > 0 && values.every(v => v && typeof v === 'object' && (v.id || v.url || v.base_url))) {
+      // Ensure each has an id (fall back to key)
+      return Object.entries(raw).map(([key, val]) => ({
+        ...val,
+        id: val.id || key,
+      }));
+    }
+  }
+
+  // Invalid format → fail closed
+  console.error('[migrate] WARNING: targets.json has unrecognized format — failing closed');
+  return [];
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────

@@ -34,14 +34,39 @@ class TargetRegistry {
       // No file → no targets. Caller may call register() to add one.
       return;
     }
+    let raw;
     try {
-      const data = JSON.parse(fs.readFileSync(this.path, 'utf-8'));
-      const list = Array.isArray(data) ? data : (data.targets || []);
-      for (const t of list) {
-        if (t && t.id) this.targets.set(t.id, t);
-      }
+      raw = JSON.parse(fs.readFileSync(this.path, 'utf-8'));
     } catch (e) {
-      console.error(`[target-registry] failed to load ${this.path}: ${e.message}`);
+      console.error(`[target-registry] WARNING: ${this.path} is invalid JSON — failing closed: ${e.message}`);
+      return;
+    }
+
+    let list = [];
+    // Format 1: Array
+    if (Array.isArray(raw)) {
+      list = raw;
+    }
+    // Format 2: { targets: [...] } or { version: "...", targets: [...] }
+    else if (raw && typeof raw === 'object' && Array.isArray(raw.targets)) {
+      list = raw.targets;
+    }
+    // Format 3: keyed object { "target-id": { ... } }
+    else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const values = Object.values(raw);
+      if (values.length > 0 && values.every(v => v && typeof v === 'object' && (v.id || v.url || v.base_url))) {
+        list = Object.entries(raw).map(([key, val]) => ({ ...val, id: val.id || key }));
+      } else {
+        console.error('[target-registry] WARNING: targets.json has unrecognized format — failing closed');
+        return;
+      }
+    } else {
+      console.error('[target-registry] WARNING: targets.json has unrecognized format — failing closed');
+      return;
+    }
+
+    for (const t of list) {
+      if (t && t.id) this.targets.set(t.id, t);
     }
   }
 

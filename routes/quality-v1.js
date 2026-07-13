@@ -28,17 +28,53 @@ function registerRoutes(app, ctx, middleware, pipelines) {
   const persistence = new Persistence();
   const targetRegistry = new TargetRegistry();
 
-  // Helper: get current canonical store
-  // Priority: persisted store (from output/canonical/bugs.json) if it has bugs,
-  // then in-memory store (from VerificationEngine session).
-  // This ensures that migrated historical bugs are served even on fresh start.
+  // Helper: get current canonical store with deterministic merge policy.
+  //
+  // Policy:
+  //   1. Load persisted store from output/canonical/bugs.json (baseline)
+  //   2. If in-memory store has bugs, MERGE them by fingerprint
+  //   3. Never replace persisted bugs with empty in-memory store
+  //   4. Never return duplicates
+  //   5. Never ignore valid new runtime findings
   function getStore() {
     const persisted = persistence.loadCanonicalStore();
-    if (persisted.size() > 0) return persisted;
-    if (ctx.verificationEngine && ctx.verificationEngine.canonicalStore) {
-      return ctx.verificationEngine.canonicalStore;
+    const memStore = (ctx.verificationEngine && ctx.verificationEngine.canonicalStore)
+      ? ctx.verificationEngine.canonicalStore
+      : null;
+
+    if (!memStore || memStore.size() === 0) {
+      // No in-memory updates — return persisted as-is
+      return persisted;
     }
-    return persisted;
+
+    if (persisted.size() === 0) {
+      // No persisted data — return in-memory
+      return memStore;
+    }
+
+    // Both have data — merge by fingerprint
+    // Persisted bugs are the baseline; in-memory updates override/extend
+    const merged = new Map();
+    // Start with persisted
+    for (const bug of persisted.all()) {
+      merged.set(bug.fingerprint, bug);
+    }
+    // Overlay in-memory (updates same fingerprint, adds new ones)
+    for (const bug of memStore.all()) {
+      const existing = merged.get(bug.fingerprint);
+      if (existing) {
+        // Merge: in-memory is newer (has session updates)
+        merged.set(bug.fingerprint, { ...existing, ...bug, observations: [...(existing.observations || []), ...(bug.observations || [])] });
+      } else {
+        // New bug from runtime
+        merged.set(bug.fingerprint, bug);
+      }
+    }
+    // Build a transient store from the merged map
+    const { CanonicalBugStore } = require('../canonical-bug-store');
+    const transient = new CanonicalBugStore();
+    transient.bugs = merged;
+    return transient;
   }
 
   function buildSummary(store) {
