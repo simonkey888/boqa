@@ -108,32 +108,48 @@ function loadTargets() {
     return [];
   }
 
+  let parsedTargets = [];
+
   // Format 1: Array
   if (Array.isArray(raw)) {
-    return raw.filter(t => t && t.id);
+    parsedTargets = raw.filter(t => t && t.id);
   }
-
   // Format 2: { targets: [...] }
-  if (raw && typeof raw === 'object' && Array.isArray(raw.targets)) {
-    return raw.targets.filter(t => t && t.id);
+  else if (raw && typeof raw === 'object' && Array.isArray(raw.targets)) {
+    parsedTargets = raw.targets.filter(t => t && t.id);
   }
-
   // Format 3: keyed object { "target-id": { id: "target-id", ... } }
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    // Check if values look like target objects (have 'id' or 'url' or 'base_url')
+  else if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     const values = Object.values(raw);
     if (values.length > 0 && values.every(v => v && typeof v === 'object' && (v.id || v.url || v.base_url))) {
-      // Ensure each has an id (fall back to key)
-      return Object.entries(raw).map(([key, val]) => ({
+      parsedTargets = Object.entries(raw).map(([key, val]) => ({
         ...val,
         id: val.id || key,
       }));
     }
   }
 
-  // Invalid format → fail closed
-  console.error('[migrate] WARNING: targets.json has unrecognized format — failing closed');
-  return [];
+  // If targets.json exists but has 0 valid targets, fall back to default
+  // pending_verification target so bugs can still be canonicalized.
+  if (parsedTargets.length === 0) {
+    console.error('[migrate] WARNING: targets.json has 0 valid targets — using default pending_verification');
+    return [{
+      id: 'target-ripio',
+      name: 'Ripio',
+      base_url: 'https://ripio.com',
+      url: 'https://ripio.com',
+      authorization_status: 'pending_verification',
+      authorization_source: null,
+      authorization_source_url: null,
+      authorization_checked_at: null,
+      scope_allowlist: [],
+      scope_denylist: [],
+      allowed_methods: ['GET', 'HEAD', 'OPTIONS'],
+      enabled: false,
+    }];
+  }
+
+  return parsedTargets;
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────
