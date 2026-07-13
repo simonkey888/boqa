@@ -1,0 +1,10 @@
+services:
+  boqa:
+    restart: unless-stopped
+    ports:
+      - "80:7070"
+    volumes:
+      - /var/lib/boqa/output:/app/output
+    environment:
+      BOQA_API_KEY: ${BOQA_API_KEY:?BOQA_API_KEY must be set externally}
+      BOQA_HMAC_SECRET: ${BOQA_HMAC_SECRET:?BOQA_HMAC_SECRET must be set externally}
