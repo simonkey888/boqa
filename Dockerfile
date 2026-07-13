@@ -1,17 +1,13 @@
 # BOQA v1.4.0 — Production Docker Image
 # URGENT-3: Containerization for Northflank deployment
 #
-# Build:  docker build -t boqa:1.4.0 .
-# Run:    docker run -p 7070:7070 boqa:1.4.0
-#
-# Default API key is BOQA123 (override with -e BOQA_API_KEY=<stronger-key>
-# in production for better security).
+# Build: docker build -t boqa:1.4.0-fixed .
+# Production requires BOQA_API_KEY and BOQA_HMAC_SECRET as external variables.
 
 FROM node:20-slim
 
-# Auth gate disabled — backend runs in open mode.
-# To re-enable: set BOQA_API_KEY env var to a non-empty string.
-# ENV BOQA_API_KEY=BOQA123   # commented out — auth disabled
+# API-key and HMAC authentication are mandatory in production and are supplied
+# externally at runtime; no credentials are stored in this image or repository.
 ENV BOQA_MODE=live
 ENV BOQA_AUTO_ANALYZE=true
 ENV HEADLESS=true
@@ -64,8 +60,7 @@ EXPOSE 7070
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD node -e "const http = require('http'); const req = http.get('http://localhost:7070/api/health', (res) => { process.exit(res.statusCode === 200 || res.statusCode === 503 ? 0 : 1); }); req.on('error', () => process.exit(1));"
+    CMD node -e "const http=require('http');const r=http.get('http://localhost:7070/api/health',res=>process.exit(res.statusCode===200?0:1));r.on('error',()=>process.exit(1));"
 
 # Start BOQA in live mode
 CMD ["node", "server.js", "--mode=live"]
-

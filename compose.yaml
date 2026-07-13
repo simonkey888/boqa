@@ -1,5 +1,9 @@
 services:
   boqa:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: boqa:1.4.0-fixed
     restart: unless-stopped
     ports:
       - "80:7070"
