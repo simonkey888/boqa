@@ -131,7 +131,7 @@
 
   function renderMetrics() {
     $('#m-bugs').textContent = state.bugs.length;
-    $('#m-coverage').textContent = state.coverage + '%';
+    $('#m-coverage').textContent = state.coverage === null ? 'N/D' : state.coverage + '%';
     // m-evidence element was removed from HTML — evidenceQuality is tracked
     // in state but no longer rendered. Safe no-op.
   }
@@ -227,23 +227,40 @@
 
   async function pollState() {
     try {
-      const [bugsRes, healthRes, metricsRes, covResult] = await Promise.all([
-        fetchJson('/api/bugs'),
+      const [bugsRes, healthRes, metricsRes, covResult, portfolioRes] = await Promise.all([
+        fetchJson('/api/bugs?status=all'),
         fetchJson('/api/health'),
         fetchJson('/api/runtime/metrics'),
-        fetchJson('/api/coverage').then(value => ({ ok: true, value })).catch(error => ({ ok: false, error }))
+        fetchJson('/api/coverage').then(value => ({ ok: true, value })).catch(error => ({ ok: false, error })),
+        fetchJson('/api/portfolio').then(value => ({ ok: true, value })).catch(error => ({ ok: false, error })),
       ]);
 
-      const newBugs = bugsRes.bugs || [];
-      // Log any new confirmed bugs as they appear
-      for (const bug of newBugs) {
+      // FASE 11 — Separate bugs by quality_status
+      const allBugs = bugsRes.bugs || [];
+      const reportableBugs  = allBugs.filter(b => b.quality_status === 'reportable');
+      const needsReviewBugs = allBugs.filter(b => b.quality_status === 'needs_review');
+      const rejectedBugs    = allBugs.filter(b => b.quality_status === 'rejected');
+
+      // Log only NEW reportable bugs
+      for (const bug of reportableBugs) {
         if (!state.bugs.some(b => b.id === bug.id)) {
-          logEvent('bug', `BUG CONFIRMADO: ${bug.title || bug.id}`);
+          logEvent('bug', `BUG REPORTABLE: ${bug.title || bug.id}`);
         }
       }
-      state.bugs = newBugs;
-      if (covResult.ok) state.coverage = Math.round(covResult.value.overall_score || 0);
-      state.evidenceQuality = state.bugs.length > 0 ? 100 : 0;
+      // Main list shows only reportable (Fase 10)
+      state.bugs = reportableBugs;
+      // FASE 12 — Coverage: accept overall_score, score, coverage_score, or null (N/D)
+      if (covResult.ok) {
+        const covValue =
+          covResult.value.overall_score ??
+          covResult.value.score ??
+          covResult.value.coverage_score ??
+          null;
+        state.coverage = covValue !== null ? Math.round(covValue) : null;
+      }
+      state.evidenceQuality = reportableBugs.length > 0
+        ? Math.round(reportableBugs.reduce((s, b) => s + (b.evidence_quality || 0), 0) / reportableBugs.length)
+        : 0;
       state.serverUptimeMs = Number(healthRes.server_uptime_ms ?? metricsRes.metrics?.uptime_ms ?? 0);
       state.uptimeObservedAt = Date.now();
       $('#status-worker').textContent = 'Worker: conectado';
@@ -251,7 +268,32 @@
       $('#status-hunter').textContent = `Hunter: ${healthRes.agent_available ? 'activo' : 'inactivo'}`;
       const replay = metricsRes.metrics?.replay;
       $('#status-replay').textContent = `Replay: ${replay ? `operativo (${replay.successes || 0}/${replay.attempts || 0})` : 'sin métricas'}`;
-      $('#status-findings').textContent = `Findings pendientes: ${bugsRes.summary?.findings_pending ?? 'no informado'} · Bugs reportados: ${bugsRes.total ?? newBugs.length}`;
+
+      // FASE 12 — Clear quality breakdown instead of vague "findings pending"
+      const summary = bugsRes.summary || {};
+      const portfolio = portfolioRes.ok ? portfolioRes.value : null;
+      const usd = portfolio?.estimated_value_usd;
+      $('#status-findings').textContent =
+        `Reportables: ${summary.reportable ?? reportableBugs.length} · ` +
+        `En revisión: ${summary.needs_review ?? needsReviewBugs.length} · ` +
+        `Observaciones crudas: ${summary.raw_observations ?? allBugs.length}` +
+        (usd && usd.typical > 0 ? ` · USD típico: $${usd.typical}` : '');
+
+      // FASE 12 — Target authorized: display if present in health response
+      const target = healthRes.target;
+      const targetEl = $('#status-target');
+      if (targetEl) {
+        if (target && target.authorization_status === 'authorized') {
+          try {
+            const host = new URL(target.url).host;
+            targetEl.textContent = `Target autorizado: ${host}`;
+          } catch {
+            targetEl.textContent = `Target autorizado: ${target.url || 'desconocido'}`;
+          }
+        } else {
+          targetEl.textContent = 'Target autorizado: no informado';
+        }
+      }
 
       // [Surgical Patch: HTTP Status Indicator Fallback]
       // Si el fetch HTTP tiene éxito, el servidor está vivo y respondiendo.

@@ -91,6 +91,7 @@ require('./routes/v12').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v13').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v14').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v15').registerRoutes(app, ctx, middleware, pipelines);
+require('./routes/quality-v1').registerRoutes(app, ctx, middleware, pipelines);
 
 // STRUCT-6: S6 Pipeline API routes
 require('./routes/s6').registerRoutes(app, ctx, middleware, pipelines);
