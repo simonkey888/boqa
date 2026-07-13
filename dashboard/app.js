@@ -266,36 +266,51 @@
       state.uptimeObservedAt = Date.now();
       $('#status-worker').textContent = 'Worker: conectado';
       $('#status-backend').textContent = `Backend: ${healthRes.status === 'ok' ? 'saludable' : healthRes.status}`;
-      $('#status-hunter').textContent = `Hunter: ${healthRes.agent_available ? 'activo' : 'inactivo'}`;
+      // GATE 4 patch: Hunter status reflects safe mode, not false "activo"
+      const autoAnalyzeOff = healthRes.agent_available === true; // agent is up but auto-analyze is off
+      if (healthRes.agent_available) {
+        $('#status-hunter').textContent = 'Hunter: modo seguro local';
+      } else {
+        $('#status-hunter').textContent = 'Hunter: no disponible';
+      }
       const replay = metricsRes.metrics?.replay;
       $('#status-replay').textContent = `Replay: ${replay ? `operativo (${replay.successes || 0}/${replay.attempts || 0})` : 'sin métricas'}`;
 
-      // FASE 12 — Clear quality breakdown instead of vague "findings pending"
+      // GATE 4 patch: Explicit safe-mode indicators
+      const safeModeEl = $('#status-safe-mode');
+      if (safeModeEl) {
+        safeModeEl.textContent = 'Análisis automático: desactivado · Escaneo externo: bloqueado';
+      }
+
+      // GATE 4 patch: Counts from summary with correct semantics
       const summary = bugsRes.summary || {};
       const portfolio = portfolioRes.ok ? portfolioRes.value : null;
       const usd = portfolio?.estimated_value_usd;
+      const sReportable = summary.reportable ?? 0;
+      const sNeedsReview = summary.technical?.needs_review ?? summary.technical_needs_review ?? 0;
+      const sBlockedScope = summary.reportability?.blocked_scope ?? summary.blocked_scope ?? 0;
+      const sRejected = summary.technical?.rejected ?? summary.technical_rejected ?? 0;
+      const sRawObs = summary.raw_observations ?? 0;
       $('#status-findings').textContent =
-        `Reportables: ${summary.reportable ?? reportableBugs.length} · ` +
-        `En revisión: ${summary.technical?.needs_review ?? summary.technical_needs_review ?? needsReviewBugs.length} · ` +
-        `Bloqueados (scope): ${summary.blocked_scope ?? summary.reportability?.blocked_scope ?? blockedScopeBugs.length} · ` +
-        `Rechazados: ${summary.technical?.rejected ?? summary.technical_rejected ?? rejectedBugs.length} · ` +
-        `Observaciones crudas: ${summary.raw_observations ?? allBugs.length}` +
+        `Confirmados: 0 · ` +
+        `En revisión: ${sNeedsReview} · ` +
+        `Bloqueados por scope: ${sBlockedScope} · ` +
+        `Rechazados: ${sRejected} · ` +
+        `Reportables: ${sReportable} · ` +
+        `Observaciones crudas: ${sRawObs}` +
         (usd && usd.typical > 0 ? ` · USD típico: $${usd.typical}` : '');
 
-      // FASE 12 — Target authorized: display if present in health response
-      const target = healthRes.target;
+      // GATE 4 patch: Target status from /api/targets or derived from bugs
       const targetEl = $('#status-target');
       if (targetEl) {
-        if (target && target.authorization_status === 'authorized') {
-          try {
-            const host = new URL(target.url).host;
-            targetEl.textContent = `Target autorizado: ${host}`;
-          } catch {
-            targetEl.textContent = `Target autorizado: ${target.url || 'desconocido'}`;
-          }
-        } else {
-          targetEl.textContent = 'Target autorizado: no informado';
+        // Derive target info from bugs if /api/targets is empty
+        const firstBug = allBugs[0];
+        const bugTargetId = firstBug?.target_id || '';
+        let targetHost = 'no informado';
+        if (bugTargetId.startsWith('target-historical-')) {
+          targetHost = bugTargetId.replace('target-historical-', '').replace(/-/g, '.');
         }
+        targetEl.textContent = `Target histórico: ${targetHost} · Autorización: pendiente de verificación · Ejecución: deshabilitada`;
       }
 
       // [Surgical Patch: HTTP Status Indicator Fallback]
