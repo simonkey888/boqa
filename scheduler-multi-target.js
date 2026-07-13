@@ -55,7 +55,8 @@ class MultiTargetScheduler {
    */
   pickNext() {
     const now = Date.now();
-    const eligible = this.registry.enabled().filter(t => {
+    // FASE C — only fully-verified targets are eligible
+    const eligible = this.registry.executable().filter(t => {
       const last = this.lastRunAt.get(t.id) || 0;
       return (now - last) >= this.cooldownMs;
     });
@@ -79,8 +80,16 @@ class MultiTargetScheduler {
     if (this.active !== null) {
       throw new Error(`runSession: another target is already active (${this.active})`);
     }
-    if (target.authorization_status !== 'authorized') {
-      return { target_id: target.id, aborted: true, reason: 'target_not_authorized' };
+    // FASE C — Use the stricter isExecutable() check from TargetRegistry.
+    // This rejects targets that are pending_verification, disabled, missing
+    // authorization_source_url, missing scope_allowlist, or missing valid
+    // authorization_checked_at.
+    if (!this.registry.isExecutable(target)) {
+      return {
+        target_id: target.id,
+        aborted: true,
+        reason: `target_not_executable (status=${target.authorization_status}, enabled=${target.enabled}, has_auth_url=${!!target.authorization_source_url}, scope_count=${target.scope_allowlist?.length || 0}, has_checked_at=${!!target.authorization_checked_at})`,
+      };
     }
 
     this.active = target.id;
@@ -89,7 +98,7 @@ class MultiTargetScheduler {
     const abortReasons = [];
 
     try {
-      // Pre-flight scope validation
+      // Pre-flight scope validation (also enforces isExecutable internally)
       const scopeCheck = this.registry.verifyScope(target.id, target.url);
       if (!scopeCheck.in_scope) {
         return { target_id: target.id, aborted: true, reason: `scope_validation_failed: ${scopeCheck.reason}` };

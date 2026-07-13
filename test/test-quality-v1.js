@@ -535,21 +535,86 @@ test('17. coverage absent → null', () => {
 });
 
 // 18. Scope: redirect to external → blocked
+// FASE C — Now uses a fully-authorized target (with all required fields).
+// The cross-origin check still applies, but only AFTER isExecutable() passes.
 test('18. scope: cross-origin redirect blocked', () => {
   const reg = new TargetRegistry({ path: '/tmp/_boqa_test_targets_' + Date.now() + '.json' });
-  reg.register({ id: 't1', url: 'https://ripio.com', authorization_source: 'public_bug_bounty_program' });
+  // Fully-authorized target with all FASE C required fields
+  reg.register({
+    id: 't1',
+    url: 'https://ripio.com',
+    authorization_status: 'authorized',
+    authorization_source: 'public_bug_bounty_program',
+    authorization_source_url: 'https://ripio.com/security',
+    authorization_checked_at: new Date().toISOString(),
+    scope_allowlist: ['https://ripio.com/*'],
+  });
   const scope = reg.verifyScope('t1', 'https://evil.com/path');
   assertEq(scope.in_scope, false, 'cross-origin should be blocked');
   assertEq(scope.reason, 'cross_origin_redirect_blocked', 'reason correct');
 });
 
 // 19. Target not authorized → scan rejected
+// FASE C — Now covers 4 sub-cases per the new stricter isExecutable() rules.
 test('19. unauthorized target → scan rejected', () => {
   const reg = new TargetRegistry({ path: '/tmp/_boqa_test_targets2_' + Date.now() + '.json' });
-  // Try to register without authorization_source → should throw
-  let threw = false;
-  try { reg.register({ id: 't1', url: 'https://x.com' }); } catch { threw = true; }
-  assertEq(threw, true, 'register without authorization_source should throw');
+
+  // 19a. Register authorized WITHOUT authorization_source_url → must throw
+  let threwNoUrl = false;
+  try {
+    reg.register({
+      id: 't1-no-url', url: 'https://x.com',
+      authorization_status: 'authorized',
+      authorization_source: 'public_bug_bounty_program',
+      // missing authorization_source_url
+      authorization_checked_at: new Date().toISOString(),
+      scope_allowlist: ['https://x.com/*'],
+    });
+  } catch { threwNoUrl = true; }
+  assertEq(threwNoUrl, true, 'register authorized without authorization_source_url must throw');
+
+  // 19b. Register pending_verification without any auth fields → OK (staging allowed)
+  //      BUT isExecutable() must return false.
+  reg.register({ id: 't1-pending', url: 'https://pending.com' });
+  const pendingTarget = reg.get('t1-pending');
+  assertEq(reg.isExecutable(pendingTarget), false, 'pending_verification target is NOT executable');
+
+  // 19c. Register authorized with empty scope_allowlist → must throw
+  let threwEmptyScope = false;
+  try {
+    reg.register({
+      id: 't1-empty-scope', url: 'https://y.com',
+      authorization_status: 'authorized',
+      authorization_source: 'public_bug_bounty_program',
+      authorization_source_url: 'https://y.com/security',
+      authorization_checked_at: new Date().toISOString(),
+      scope_allowlist: [],
+    });
+  } catch { threwEmptyScope = true; }
+  assertEq(threwEmptyScope, true, 'register authorized with empty scope_allowlist must throw');
+
+  // 19d. Register authorized with all fields but enabled=false → isExecutable=false
+  reg.register({
+    id: 't1-disabled', url: 'https://z.com',
+    authorization_status: 'authorized',
+    authorization_source: 'public_bug_bounty_program',
+    authorization_source_url: 'https://z.com/security',
+    authorization_checked_at: new Date().toISOString(),
+    scope_allowlist: ['https://z.com/*'],
+    enabled: false,
+  });
+  assertEq(reg.isExecutable(reg.get('t1-disabled')), false, 'disabled target is NOT executable');
+
+  // 19e. Fully-authorized target → isExecutable=true
+  reg.register({
+    id: 't1-full', url: 'https://ok.com',
+    authorization_status: 'authorized',
+    authorization_source: 'public_bug_bounty_program',
+    authorization_source_url: 'https://ok.com/security',
+    authorization_checked_at: new Date().toISOString(),
+    scope_allowlist: ['https://ok.com/*'],
+  });
+  assertEq(reg.isExecutable(reg.get('t1-full')), true, 'fully-authorized target IS executable');
 });
 
 // 20. Restart Docker → canonical state preserved (via persistence)

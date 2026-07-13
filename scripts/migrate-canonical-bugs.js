@@ -68,25 +68,30 @@ function readJsonFiles(dir) {
 function loadTargets() {
   const targetsFile = path.resolve(__dirname, '..', 'output', 'targets', 'targets.json');
   if (!fs.existsSync(targetsFile)) {
-    // Default to a single placeholder target (Ripio — authorized per Fase 13)
+    // FASE C — Default target is now PENDING_VERIFICATION.
+    // BOQA does NOT auto-authorize Ripio (or any site) without proof of
+    // a public bug bounty program. The migration can still run against
+    // historical observations, but the scheduler will refuse to scan.
     return [{
       id: 'target-ripio',
       name: 'Ripio',
       base_url: 'https://ripio.com',
       url: 'https://ripio.com',
-      authorization_status: 'authorized',
-      authorization_source: 'public_bug_bounty_program',
+      authorization_status: 'pending_verification',
+      authorization_source: null,
+      authorization_source_url: null,
+      authorization_checked_at: null,
       program_name: '',
       program_url: '',
-      scope_allowlist: ['https://ripio.com/*'],
+      scope_allowlist: [],
       scope_denylist: [],
       allowed_methods: ['GET', 'HEAD', 'OPTIONS'],
       allow_authenticated_testing: false,
-      max_requests_per_minute: 20,
-      max_concurrency: 1,
-      max_depth: 3,
+      max_requests_per_minute: 0,
+      max_concurrency: 0,
+      max_depth: 0,
       bounty_policy: {},
-      enabled: true,
+      enabled: false,
     }];
   }
   try {
