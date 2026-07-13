@@ -74,31 +74,11 @@ function readJsonFiles(dir) {
 function loadTargets() {
   const targetsFile = path.resolve(__dirname, '..', 'output', 'targets', 'targets.json');
   if (!fs.existsSync(targetsFile)) {
-    // FASE C — Default target is now PENDING_VERIFICATION.
-    // BOQA does NOT auto-authorize Ripio (or any site) without proof of
-    // a public bug bounty program. The migration can still run against
-    // historical observations, but the scheduler will refuse to scan.
-    return [{
-      id: 'target-ripio',
-      name: 'Ripio',
-      base_url: 'https://ripio.com',
-      url: 'https://ripio.com',
-      authorization_status: 'pending_verification',
-      authorization_source: null,
-      authorization_source_url: null,
-      authorization_checked_at: null,
-      program_name: '',
-      program_url: '',
-      scope_allowlist: [],
-      scope_denylist: [],
-      allowed_methods: ['GET', 'HEAD', 'OPTIONS'],
-      allow_authenticated_testing: false,
-      max_requests_per_minute: 0,
-      max_concurrency: 0,
-      max_depth: 0,
-      bounty_policy: {},
-      enabled: false,
-    }];
+    // GATE B: No targets.json → return empty array.
+    // resolveMigrationTarget() will resolve from historical evidence
+    // or fall back to target-legacy-unattributed.
+    // We do NOT inject a default Ripio target.
+    return [];
   }
   let raw;
   try {
@@ -129,26 +109,10 @@ function loadTargets() {
     }
   }
 
-  // If targets.json exists but has 0 valid targets, fall back to default
-  // pending_verification target so bugs can still be canonicalized.
-  if (parsedTargets.length === 0) {
-    console.error('[migrate] WARNING: targets.json has 0 valid targets — using default pending_verification');
-    return [{
-      id: 'target-ripio',
-      name: 'Ripio',
-      base_url: 'https://ripio.com',
-      url: 'https://ripio.com',
-      authorization_status: 'pending_verification',
-      authorization_source: null,
-      authorization_source_url: null,
-      authorization_checked_at: null,
-      scope_allowlist: [],
-      scope_denylist: [],
-      allowed_methods: ['GET', 'HEAD', 'OPTIONS'],
-      enabled: false,
-    }];
-  }
-
+  // GATE B: If targets.json has 0 valid targets, return [].
+  // resolveMigrationTarget() handles attribution from historical evidence
+  // (domain field in records) or falls back to target-legacy-unattributed.
+  // We do NOT inject a default Ripio target.
   return parsedTargets;
 }
 
@@ -211,28 +175,154 @@ function main() {
   // Filter: only keep observations that look like bugs
   rawObservations = rawObservations.filter(o => o && (o.category || o.endpoint || o.path || o.url));
 
-  // Resolve target for each observation
-  function resolveTarget(obs) {
-    if (obs.target_id && targetMap.has(obs.target_id)) return targetMap.get(obs.target_id);
-    if (obs.target) {
-      const t = targetByOrigin.get(_originOf(obs.target));
-      if (t) return t;
+  // ─── GATE B: resolveMigrationTarget ────────────────────────────────
+  //
+  // Resolves the target for a historical observation using ONLY evidence
+  // from the record itself and the registry. NEVER uses:
+  //   - CONFIG.target
+  //   - process.env.BOQA_TARGET
+  //   - CLI --target arguments
+  //   - https://ripio.com as default
+  //   - first arbitrary target from registry
+  //
+  // Order:
+  //   1. target_id explicit + valid in registry
+  //   2. origin/hostname/target_url explicit in record → match against registry
+  //   3. domain field in record → derive target identity from historical evidence
+  //   4. target-legacy-unattributed (fallback, confidence=absent)
+  //
+  // Returns: { target, resolution_source, resolution_confidence }
+
+  // Cache for derived targets (so we don't create duplicates)
+  const derivedTargetCache = new Map();
+
+  function resolveMigrationTarget(obs) {
+    // 1. target_id explicit + valid in registry
+    if (obs.target_id && targetMap.has(obs.target_id)) {
+      return { target: targetMap.get(obs.target_id), resolution_source: 'explicit_target_id', resolution_confidence: 'explicit' };
     }
-    // Default: first authorized target
-    return targets.find(t => t.authorization_status === 'authorized') || targets[0];
+
+    // 2. origin/hostname/target_url explicit in record → match against registry
+    const urlFields = ['target_url', 'target', 'url', 'origin', 'base_url', 'affected_url', 'request_url'];
+    for (const field of urlFields) {
+      const val = obs[field];
+      if (val && typeof val === 'string') {
+        const origin = _originOf(val);
+        if (origin && targetByOrigin.has(origin)) {
+          return { target: targetByOrigin.get(origin), resolution_source: 'registry_match', resolution_confidence: 'explicit' };
+        }
+      }
+    }
+
+    // 3. domain field → derive target identity from historical evidence
+    //    Check both top-level domain field AND affected_assets[].domain
+    let domainFromEvidence = null;
+    if (obs.domain && typeof obs.domain === 'string') {
+      domainFromEvidence = obs.domain;
+    }
+    if (!domainFromEvidence && Array.isArray(obs.affected_assets)) {
+      for (const asset of obs.affected_assets) {
+        if (asset && asset.domain && typeof asset.domain === 'string') {
+          domainFromEvidence = asset.domain;
+          break;
+        }
+      }
+    }
+
+    if (domainFromEvidence) {
+      const domain = domainFromEvidence.toLowerCase().trim();
+      if (domain && domain.includes('.')) {
+        const cacheKey = `historical:${domain}`;
+        if (derivedTargetCache.has(cacheKey)) {
+          return { target: derivedTargetCache.get(cacheKey), resolution_source: 'historical_evidence', resolution_confidence: 'explicit' };
+        }
+        // Create a synthetic target derived from historical evidence
+        const derivedTarget = {
+          id: `target-historical-${domain.replace(/\./g, '-')}`,
+          name: domain,
+          base_url: `https://${domain}`,
+          url: `https://${domain}`,
+          authorization_status: 'pending_verification',
+          authorization_source: null,
+          authorization_source_url: null,
+          authorization_checked_at: null,
+          program_name: '',
+          program_url: '',
+          scope_allowlist: [],
+          scope_denylist: [],
+          allowed_methods: ['GET', 'HEAD', 'OPTIONS'],
+          allow_authenticated_testing: false,
+          max_requests_per_minute: 0,
+          max_concurrency: 0,
+          max_depth: 0,
+          bounty_policy: {},
+          enabled: false,
+          target_resolution_source: 'historical_evidence',
+          target_resolution_confidence: 'explicit',
+        };
+        derivedTargetCache.set(cacheKey, derivedTarget);
+        return { target: derivedTarget, resolution_source: 'historical_evidence', resolution_confidence: 'explicit' };
+      }
+    }
+
+    // 4. Fallback: target-legacy-unattributed
+    const legacyTarget = {
+      id: 'target-legacy-unattributed',
+      name: 'Legacy (unattributed)',
+      url: null,
+      base_url: null,
+      authorization_status: 'pending_verification',
+      authorization_source: null,
+      authorization_source_url: null,
+      authorization_checked_at: null,
+      program_name: '',
+      program_url: '',
+      scope_allowlist: [],
+      scope_denylist: [],
+      allowed_methods: ['GET', 'HEAD', 'OPTIONS'],
+      allow_authenticated_testing: false,
+      max_requests_per_minute: 0,
+      max_concurrency: 0,
+      max_depth: 0,
+      bounty_policy: {},
+      enabled: false,
+      target_resolution_source: 'migration_fallback',
+      target_resolution_confidence: 'absent',
+    };
+    return { target: legacyTarget, resolution_source: 'migration_fallback', resolution_confidence: 'absent' };
   }
+
+  // Track resolution stats
+  const resolutionStats = {
+    resolved_from_explicit_evidence: 0,
+    resolved_from_registry: 0,
+    resolved_as_legacy_unattributed: 0,
+  };
 
   // Observe each into the canonical store
   const store = new CanonicalBugStore();
   for (const obs of rawObservations) {
-    const target = resolveTarget(obs);
+    const { target, resolution_source } = resolveMigrationTarget(obs);
     if (!target) continue;
+    // Track stats (only for unique candidates, not per-observation)
     try {
       store.observe(obs, target);
     } catch (e) {
       console.error(`[migrate] observe failed for ${obs.source || 'unknown'}: ${e.message}`);
     }
   }
+
+  // Count resolution stats from canonical bugs (by target_id)
+  for (const bug of store.all()) {
+    if (bug.target_id && bug.target_id.startsWith('target-historical-')) {
+      resolutionStats.resolved_from_explicit_evidence++;
+    } else if (bug.target_id === 'target-legacy-unattributed') {
+      resolutionStats.resolved_as_legacy_unattributed++;
+    } else {
+      resolutionStats.resolved_from_registry++;
+    }
+  }
+  console.error(`[migrate] target resolution: ${JSON.stringify(resolutionStats)}`);
 
   // Evaluate reportability for each canonical bug
   const reportable = [];
@@ -245,7 +335,16 @@ function main() {
   const blockedDuplicateRisk = [];
 
   for (const bug of store.all()) {
-    const target = targetMap.get(bug.target_id) || targets[0];
+    const target = targetMap.get(bug.target_id) || derivedTargetCache.get(`historical:${bug.target_id?.replace('target-historical-', '').replace(/-/g, '.')}`) || (bug.target_id === 'target-legacy-unattributed' ? {
+      id: 'target-legacy-unattributed',
+      url: null,
+      authorization_status: 'pending_verification',
+      enabled: false,
+      scope_allowlist: [],
+      allowed_methods: [],
+      authorization_source_url: null,
+      authorization_checked_at: null,
+    } : null) || targets[0];
     // Synthesize a minimal context for the engine
     const context = {
       // Conservative defaults: assume we have NOT verified impact/exploitability
@@ -363,7 +462,8 @@ function main() {
     blocked_program_rules:   blockedProgramRules.length,
     blocked_duplicate_risk:  blockedDuplicateRisk.length,
     duplicate_reduction_pct: duplicateReductionPct,
-    note: 'Bugs are classified on TWO independent axes: technical_status (is the bug real?) and reportability_status (can we report it?). Lack of scope authorization yields blocked_scope, NOT rejected — the bug may still be technically valid.',
+    target_resolution: resolutionStats,
+    note: 'Bugs are classified on TWO independent axes: technical_status (is the bug real?) and reportability_status (can we report it?). Lack of scope authorization yields blocked_scope, NOT rejected — the bug may still be technically valid. Target provenance is resolved from historical evidence (domain field), never from runtime defaults (BOQA_TARGET, CONFIG.target, CLI --target).',
   };
 
   console.error(JSON.stringify(report, null, 2));
