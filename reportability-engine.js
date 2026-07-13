@@ -51,9 +51,9 @@ const CONFIDENCE_WEIGHTS = Object.freeze({
 function reproducibilityScore(reproductionCount, totalRounds) {
   if (!totalRounds || totalRounds <= 0) return 0;
   const r = reproductionCount / totalRounds;
-  if (r >= 1.0)   return 25;
-  if (r >= 0.67)  return 22;  // 2/3
-  if (r >= 0.34)  return 10;  // 1/3
+  if (r >= 1.0)        return 25;   // 3/3
+  if (r >= 2/3)        return 22;   // 2/3 (exact fractional comparison)
+  if (r >= 1/3)        return 10;   // 1/3
   return 0;
 }
 
@@ -387,11 +387,22 @@ function evaluateReportability(bug, target, context = {}) {
 
 function _matchesAny(endpoint, patterns) {
   if (!endpoint) return false;
+  // Normalize endpoint: strip origin if URL was passed
+  let epPath = endpoint;
+  if (/^https?:\/\//i.test(epPath)) {
+    try { epPath = new URL(epPath).pathname; } catch { /* keep */ }
+  }
   for (const p of patterns) {
     if (!p) continue;
-    // Convert glob-style "*" to regex
-    const re = new RegExp('^' + p.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
-    if (re.test(endpoint)) return true;
+    let pattern = p;
+    // Strip origin from pattern too
+    if (/^https?:\/\//i.test(pattern)) {
+      try { pattern = new URL(pattern).pathname; } catch { /* keep */ }
+    }
+    // pattern may be "/*" or "/api/*" or "*"
+    if (pattern === '*' || pattern === '/*') return true;
+    const re = new RegExp('^' + pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$', 'i');
+    if (re.test(epPath)) return true;
   }
   return false;
 }
