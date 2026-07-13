@@ -4,6 +4,7 @@
   "description": "Browser Observability & QA Agent — autonomous decision kernel with bounded execution authority",
   "main": "server.js",
   "scripts": {
+    "test": "node scripts/run-all-tests.js",
     "start": "node server.js",
     "live": "node server.js --mode=live",
     "baseline": "node server.js --mode=baseline",
