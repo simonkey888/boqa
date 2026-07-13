@@ -319,17 +319,24 @@ function main() {
 
   // Write outputs (unless dry-run)
   if (!DRY_RUN) {
-    if (!fs.existsSync(OUTPUT_DIR)) fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    // Write to OUTPUT_DIR/canonical/ so Persistence.loadCanonicalStore() can find them
+    const canonicalDir = path.join(OUTPUT_DIR, 'canonical');
+    if (!fs.existsSync(canonicalDir)) fs.mkdirSync(canonicalDir, { recursive: true });
     function writeAtomic(file, data) {
       const tmp = file + '.tmp';
       fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
       fs.renameSync(tmp, file);
     }
-    writeAtomic(path.join(OUTPUT_DIR, 'bugs.json'),         { generated_at: Date.now(), count: reportable.length, bugs: reportable });
-    writeAtomic(path.join(OUTPUT_DIR, 'needs-review.json'), { generated_at: Date.now(), count: needsReview.length, bugs: needsReview });
-    writeAtomic(path.join(OUTPUT_DIR, 'rejected.json'),     { generated_at: Date.now(), count: rejected.length, bugs: rejected });
-    writeAtomic(path.join(OUTPUT_DIR, 'migration-report.json'), report);
-    console.error(`[migrate] wrote ${reportable.length + needsReview.length + rejected.length} canonical bugs to ${OUTPUT_DIR}`);
+    // ALL canonical bugs in one file (API reads this and filters by status)
+    const allBugs = [...reportable, ...blockedScope, ...blockedEvidence, ...blockedProgramRules, ...blockedDuplicateRisk, ...needsReview, ...rejected];
+    writeAtomic(path.join(canonicalDir, 'bugs.json'),         { generated_at: Date.now(), count: allBugs.length, bugs: allBugs });
+    writeAtomic(path.join(canonicalDir, 'reportable.json'),   { generated_at: Date.now(), count: reportable.length, bugs: reportable });
+    writeAtomic(path.join(canonicalDir, 'blocked-scope.json'),     { generated_at: Date.now(), count: blockedScope.length, bugs: blockedScope });
+    writeAtomic(path.join(canonicalDir, 'blocked-evidence.json'),  { generated_at: Date.now(), count: blockedEvidence.length, bugs: blockedEvidence });
+    writeAtomic(path.join(canonicalDir, 'needs-review.json'), { generated_at: Date.now(), count: needsReview.length, bugs: needsReview });
+    writeAtomic(path.join(canonicalDir, 'rejected.json'),     { generated_at: Date.now(), count: rejected.length, bugs: rejected });
+    writeAtomic(path.join(canonicalDir, 'migration-report.json'), report);
+    console.error(`[migrate] wrote ${allBugs.length} canonical bugs to ${canonicalDir}`);
   } else {
     console.error('[migrate] dry-run: no files written');
   }
