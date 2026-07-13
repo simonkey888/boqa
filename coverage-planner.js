@@ -571,7 +571,7 @@ class CoveragePlanner {
 
     for (const h of topHypotheses) {
       const action = this._selectVerificationAction(h);
-      const { error, task } = this.verificationFarm.submitTask({
+      const { error, task } = await this.verificationFarm.submitTaskAsync({
         hypothesis_id: h.id,
         action,
         params: this._buildVerificationParams(h, action),
@@ -787,4 +787,3 @@ class CoveragePlanner {
 }
 
 module.exports = { CoveragePlanner, EXECUTION_MODES, LOOP_PHASES };
-

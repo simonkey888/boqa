@@ -678,9 +678,9 @@ function registerRoutes(app, ctx, middleware, pipelines) {
   });
 
   // POST /api/verification-queue — Submit a verification task
-  app.post('/api/verification-queue', (req, res) => {
+  app.post('/api/verification-queue', async (req, res) => {
     try {
-      const { error, task } = ctx.verificationFarm.submitTask(req.body);
+      const { error, task } = await ctx.verificationFarm.submitTaskAsync(req.body);
       if (error) {
         return res.status(400).json({ error });
       }
@@ -895,9 +895,9 @@ function registerRoutes(app, ctx, middleware, pipelines) {
   });
 
   // POST /api/campaigns/:id/iterate — Execute one iteration
-  app.post('/api/campaigns/:id/iterate', (req, res) => {
+  app.post('/api/campaigns/:id/iterate', async (req, res) => {
     try {
-      const results = ctx.campaignEngine.executeIteration(req.params.id);
+      const results = await ctx.campaignEngine.executeIteration(req.params.id);
       ctx.bus._broadcast({
         type: 'campaign_iteration',
         ts: Date.now(),
@@ -1123,4 +1123,3 @@ function registerRoutes(app, ctx, middleware, pipelines) {
 }
 
 module.exports = { registerRoutes };
-

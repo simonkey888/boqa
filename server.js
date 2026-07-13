@@ -192,7 +192,7 @@ async function main() {
   });
 
   // Start Agent (skip if init failed — degraded mode)
-  if (ctx.agent) {
+  if (ctx.agent && process.env.BOQA_ADMIN_EXECUTION_ENABLED === 'true') {
     try {
       await ctx.agent.start();
       console.log(`[Server] Agent active — mode: ${CONFIG.mode}`);
@@ -201,9 +201,12 @@ async function main() {
       console.error('[Server] Agent failed:', e.message);
       console.error('[Server] Server remains up — v0.9 APIs and dashboard available');
     }
-  } else {
+  } else if (!ctx.agent) {
     console.warn(`[Server] Agent not initialized — running in degraded mode. Error: ${ctx.agentInitError || 'unknown'}`);
     console.warn('[Server] Agent-dependent endpoints will return 503; other APIs remain functional.');
+  } else {
+    ctx.agentStartError = 'ADMIN_EXECUTION_DISABLED';
+    console.warn('[Server] Agent execution disabled by BOQA_ADMIN_EXECUTION_ENABLED fail-closed default');
   }
 
   // P5: Start runtime monitor for production observability
@@ -216,4 +219,3 @@ async function main() {
 }
 
 main();
-
