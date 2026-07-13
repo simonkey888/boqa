@@ -244,8 +244,15 @@ class VerificationEngine {
     this.safeMode = options.safeMode !== false; // true by default
     this.plans = new Map();      // planId → verificationPlan
     this.results = new Map();    // planId → verificationResult
-    this.confirmedBugs = [];     // BUG-XXXX entries
-    this.bugCounter = 0;
+
+    // FASE 2 — Canonical bug store: dedup by stable fingerprint, NOT push to array.
+    // this.confirmedBugs is kept as a getter for backward-compat with existing
+    // API consumers, but the source of truth is this.canonicalStore.
+    const { CanonicalBugStore } = require('./canonical-bug-store');
+    this.canonicalStore = new CanonicalBugStore();
+    this._currentTarget = null;  // set per-analysis-run via setTarget()
+
+    this.bugCounter = 0;  // display-only, never used as identity
 
     // Track verification metrics
     this.metrics = {
@@ -460,23 +467,67 @@ class VerificationEngine {
     if (isConfirmed) {
       this.metrics.plans_passed++;
       const bug = this._createBug(plan, result, observations);
-      this.confirmedBugs.push(bug);
-      this.metrics.bugs_confirmed++;
-      this.metrics.bugs_by_severity[bug.severity] = (this.metrics.bugs_by_severity[bug.severity] || 0) + 1;
-      this.metrics.bugs_by_category[bug.category] = (this.metrics.bugs_by_category[bug.category] || 0) + 1;
+
+      // FASE 2 — Replace push to array with canonical store observe().
+      // Same bug in 4 cycles → ONE canonical bug with observation_count=4.
+      if (!this._currentTarget) {
+        // Fallback: synthesize a target from the plan so observe() can run.
+        // This should not normally happen — setTarget() should be called
+        // before analysis begins.
+        this._currentTarget = {
+          id: plan.target_id || 'unknown-target',
+          url: plan.target_url || '',
+          authorization_status: 'authorized',  // assume; ReportabilityEngine will verify
+        };
+      }
+      const { bug: canonicalBug, is_new: isNew } = this.canonicalStore.observe(bug, this._currentTarget);
+
+      // Only increment metrics on FIRST observation of this fingerprint.
+      // Repeat observations do NOT inflate bugs_confirmed / by_severity / by_category.
+      if (isNew) {
+        this.metrics.bugs_confirmed++;
+        const sev = String(canonicalBug.severity || 'medium').toLowerCase();
+        if (this.metrics.bugs_by_severity[sev] !== undefined) {
+          this.metrics.bugs_by_severity[sev]++;
+        }
+        const cat = canonicalBug.category || 'unknown';
+        this.metrics.bugs_by_category[cat] = (this.metrics.bugs_by_category[cat] || 0) + 1;
+      }
+      // Replace the bug reference with the canonical one so downstream
+      // code (ReportabilityEngine, bounty estimator) sees the merged record.
+      Object.assign(bug, canonicalBug);
     } else {
       this.metrics.plans_failed++;
       if (result.false_positive) this.metrics.false_positive_rejected++;
     }
 
-    // Update average confidence
-    if (this.confirmedBugs.length > 0) {
+    // Update average confidence — over CANONICAL bugs only, not raw observations
+    const canonicalBugs = this.canonicalStore.all();
+    if (canonicalBugs.length > 0) {
       this.metrics.average_confidence = Math.round(
-        this.confirmedBugs.reduce((sum, b) => sum + b.confidence, 0) / this.confirmedBugs.length
+        canonicalBugs.reduce((sum, b) => sum + (b.confidence || 0), 0) / canonicalBugs.length
       );
     }
 
     return result;
+  }
+
+  /**
+   * Set the current target for canonical bug fingerprinting.
+   * Must be called at the start of each analysis run.
+   */
+  setTarget(target) {
+    if (!target) return;
+    this._currentTarget = target;
+  }
+
+  /**
+   * Backward-compatible accessor: returns canonical bugs as an array.
+   * Existing code that reads `engine.confirmedBugs` keeps working,
+   * but now receives DEDUPLICATED bugs.
+   */
+  get confirmedBugs() {
+    return this.canonicalStore.all();
   }
 
   /**
