@@ -5,7 +5,11 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    tmpfs: [/tmp:size=32m,noexec,nosuid]
+    tmpfs:
+      - /tmp:size=32m,noexec,nosuid
+      - /usr/local/tomcat/logs:size=16m,noexec,nosuid
+      - /usr/local/tomcat/temp:size=32m,noexec,nosuid
+      - /usr/local/tomcat/work:size=32m,noexec,nosuid
     pids_limit: 96
     mem_limit: 512m
     cpus: 1.0

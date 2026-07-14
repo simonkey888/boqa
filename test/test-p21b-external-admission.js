@@ -30,6 +30,9 @@ assert.strictEqual(materializeRuntimeAdmission(sourceBuild, null).runtime_ready,
 assert.strictEqual(materializeRuntimeAdmission(sourceBuild, `sha256:${'a'.repeat(64)}`).runtime_ready, true);
 
 const pinned = all.find(record => record.framework === 'owasp-juice-shop');
+assert.strictEqual(pinned.source_image_correlation.status, 'VERIFIED_OCI_PRIMARY_METADATA');
+assert.strictEqual(pinned.source_image_correlation.source_revision_label, pinned.source_commit.slice(0, 7));
+assert.strictEqual(pinned.source_image_correlation.manifest_digest, pinned.container_digest);
 assert.strictEqual(materializeRuntimeAdmission(pinned, `sha256:${'b'.repeat(64)}`).runtime_ready, false);
 assert.strictEqual(materializeRuntimeAdmission(pinned, pinned.container_digest).runtime_ready, true);
 

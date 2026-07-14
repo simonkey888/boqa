@@ -3,6 +3,15 @@ name: BOQA P2.1 external lab reality check
 on:
   pull_request:
   workflow_dispatch:
+    inputs:
+      phase:
+        description: Build/freeze runtime images or execute the already-frozen baseline
+        required: true
+        default: acquisition
+        type: choice
+        options:
+          - acquisition
+          - baseline
 
 permissions:
   contents: read
@@ -60,7 +69,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  full-external-baseline:
+  acquisition-and-runtime-freeze:
     if: github.event_name == 'workflow_dispatch'
     needs: admission-and-plane-smoke
     runs-on: ubuntu-latest
@@ -77,5 +86,24 @@ jobs:
           cache: npm
       - name: Acquisition phase - install locked dependencies
         run: npm ci --no-audit --fund=false
-      - name: Full external-lab campaign
+      - name: Acquire and verify pinned sources
+        run: bash qualification/p21/runners/acquire-sources.sh "$RUNNER_TEMP/p21-sources"
+      - name: Verify frozen corpus against upstream oracles
+        run: |
+          node qualification/p21/corpus/verify-upstream-corpus.js \
+            "$RUNNER_TEMP/p21-sources/owasp-benchmark/BenchmarkJava-79b9bd6177e07991a9c11dc19e457c840e229931" \
+            "$RUNNER_TEMP/p21-sources/owasp-nodegoat/NodeGoat-c5cb68a7084e4ae7dcc60e6a98768720a81841e8" \
+            "$RUNNER_TEMP/p21-sources/owasp-juice-shop/juice-shop-c8c407d503ce9c8e6582b39b40db84db06989744" \
+            "$RUNNER_TEMP/p21-upstream-verification.json"
+      - name: Build and freeze immutable runtime image IDs
+        run: bash qualification/p21/runners/materialize-runtime-images.sh "$RUNNER_TEMP/p21-sources" p21-runtime-digests.json
+      - name: Upload runtime provenance only
+        uses: actions/upload-artifact@v4
+        with:
+          name: boqa-p21-runtime-provenance-${{ github.sha }}
+          path: p21-runtime-digests.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Full external-lab campaign only after in-job runtime freeze
+        if: inputs.phase == 'baseline'
         run: bash qualification/p21/runners/full-external-labs.sh

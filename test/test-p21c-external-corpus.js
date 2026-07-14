@@ -1,10 +1,16 @@
 'use strict';
 
 const assert = require('assert');
+const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { BENCHMARK_PAIRS, privateOracleRows } = require('../qualification/p21/corpus/private-oracle');
 const { publicCorpus, publicAgentInput } = require('../qualification/p21/corpus/public-corpus');
 const { routeForRun, scoreableOracleRows } = require('../qualification/p21/corpus/oracle-controller');
 const { parseExpectedResults } = require('../qualification/p21/corpus/verify-upstream-corpus');
+const { scoreReport, classifyPairedResult } = require('../qualification/p21/corpus/scoring-policy');
+const { execFileSync } = require('child_process');
 
 const privateRows = privateOracleRows();
 const publicRows = publicCorpus();
@@ -55,5 +61,26 @@ assert.throws(() => routeForRun(selected.scenario_id), /VARIANT_REQUIRED/);
 const parsed = parseExpectedResults('# header\nBenchmarkTest00001,pathtraver,true,22\nBenchmarkTest00063,pathtraver,false,22\n');
 assert.deepStrictEqual(parsed.get('BenchmarkTest00001'), { category: 'pathtraver', vulnerable: true, cwe: 'CWE-22' });
 assert.deepStrictEqual(parsed.get('BenchmarkTest00063'), { category: 'pathtraver', vulnerable: false, cwe: 'CWE-22' });
+
+const ready = Object.fromEntries(['clarity', 'reproducibility', 'evidence', 'impact', 'classification', 'scope_compliance'].map(key => [key, 2]));
+assert.strictEqual(scoreReport(ready).total, 12);
+assert.strictEqual(classifyPairedResult({ reported: true, reproduced_from_clean_state: true, evidence_verified: true }, { vulnerable: true }, ready).outcome, 'TP');
+assert.strictEqual(classifyPairedResult({ reported: true, reproduced_from_clean_state: true, evidence_verified: true }, { vulnerable: false }, ready).outcome, 'FP');
+assert.strictEqual(classifyPairedResult({ reported: false }, { vulnerable: true }, ready).outcome, 'FN');
+assert.strictEqual(classifyPairedResult({ reported: false }, { vulnerable: false }, ready).outcome, 'TN');
+assert.strictEqual(classifyPairedResult({ reported: true, reproduced_from_clean_state: true, evidence_verified: true, lab_fingerprint_only: true }, { vulnerable: true }, ready).outcome, 'FN');
+
+const root = path.resolve(__dirname, '..');
+const freeze = JSON.parse(fs.readFileSync(path.join(root, 'qualification/p21/corpus/corpus-freeze.json'), 'utf8'));
+const digest = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const temp = path.join(os.tmpdir(), `p21-public-${process.pid}.json`);
+execFileSync(process.execPath, [path.join(root, 'qualification/p21/corpus/generate-public-corpus.js'), temp]);
+assert.strictEqual(digest(temp), freeze.digests.public_corpus_json_sha256);
+fs.unlinkSync(temp);
+assert.strictEqual(digest(path.join(root, 'qualification/p21/corpus/private-oracle.js')), freeze.digests.private_oracle_source_sha256);
+assert.strictEqual(digest(path.join(root, 'qualification/p21/corpus/scoring-policy.js')), freeze.digests.scoring_policy_sha256);
+assert.strictEqual(digest(path.join(root, 'qualification/p21/admission/records.json')), freeze.digests.admission_records_sha256);
+assert.strictEqual(freeze.runtime_provenance.baseline_blocked_until_all_runtime_ready, true);
+assert.strictEqual(freeze.runtime_provenance.owasp_juice_shop, 'VERIFIED_OCI_PRIMARY_METADATA');
 
 console.log('P2.1 pinned external blind corpus: PASS');

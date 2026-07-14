@@ -2,6 +2,10 @@
   "source_root": "juice-shop-c8c407d503ce9c8e6582b39b40db84db06989744",
   "build": "use upstream v19.1.1 image pinned by immutable manifest digest",
   "runtime": "upstream non-root user with no persistent volume",
+  "manifest": "bkimminich/juice-shop@sha256:67b87bff95f5719f9a31ab2bcf48cacc30fcc30d4662c2047ca0c0b8b4b7ebae",
+  "oci_revision": "c8c407d",
+  "oci_version": "19.1.1",
+  "oci_config_digest": "sha256:7be365ac406b807479a3f0538756faff6db6e3d2b3edbaeafff3b9648203c890",
   "oracle": "challenge definitions withheld until BOQA completes",
   "image_digest_policy": "require exact committed sha256 manifest digest"
 }

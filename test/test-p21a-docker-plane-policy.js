@@ -9,6 +9,8 @@ const root = path.resolve(__dirname, '..');
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/boqa-p21-external-labs.yml'), 'utf8');
 const plane = fs.readFileSync(path.join(root, 'qualification/p21/runners/docker-plane.sh'), 'utf8');
 const probe = fs.readFileSync(path.join(root, 'qualification/p21/fixtures/smoke-lab/isolation-probe.js'), 'utf8');
+const materialize = fs.readFileSync(path.join(root, 'qualification/p21/runners/materialize-runtime-images.sh'), 'utf8');
+const baseline = fs.readFileSync(path.join(root, 'qualification/p21/runners/full-external-labs.sh'), 'utf8');
 
 for (const required of [
   'permissions:\n  contents: read',
@@ -37,5 +39,12 @@ for (const required of [
 for (const required of ['external.invalid.', '1.1.1.1', '169.254.169.254', 'foreign_scenario_connected', 'host_gateway_connected']) {
   assert(probe.includes(required), `probe missing ${required}`);
 }
+
+for (const required of ['phase:', '- acquisition', '- baseline', "if: inputs.phase == 'baseline'", 'materialize-runtime-images.sh']) {
+  assert(workflow.includes(required), `workflow missing acquisition/baseline gate: ${required}`);
+}
+assert(materialize.includes('frozen_before_baseline: true'), 'runtime digest freeze missing');
+assert(materialize.includes('ROOT_RUNTIME_USER'), 'non-root runtime verification missing');
+assert(baseline.includes('RUNTIME_DIGESTS_NOT_FROZEN') && baseline.includes('RUNTIME_IMAGE_NOT_READY'), 'baseline lacks runtime provenance gate');
 
 console.log('P2.1 Docker execution-plane policy: PASS');
