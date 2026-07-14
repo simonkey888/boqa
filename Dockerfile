@@ -9,7 +9,8 @@ FROM node:20-slim
 # API-key and HMAC authentication are mandatory in production and are supplied
 # externally at runtime; no credentials are stored in this image or repository.
 ENV BOQA_MODE=live
-ENV BOQA_AUTO_ANALYZE=true
+ENV BOQA_AUTO_ANALYZE=false
+ENV BOQA_ADMIN_EXECUTION_ENABLED=false
 ENV HEADLESS=true
 
 # Install Playwright Chromium dependencies
