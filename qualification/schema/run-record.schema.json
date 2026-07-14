@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boqa://qualification/run-record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "scenario_id", "seed", "started_at", "completed_at", "agent_result", "oracle_result", "duration_ms", "requests", "scope_violations", "destructive_actions"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "scenario_id": { "type": "string" },
+    "seed": { "type": "integer" },
+    "started_at": { "type": "string" },
+    "completed_at": { "type": "string" },
+    "agent_result": { "type": "object" },
+    "oracle_result": { "type": "object" },
+    "duration_ms": { "type": "number", "minimum": 0 },
+    "requests": { "type": "integer", "minimum": 0 },
+    "scope_violations": { "type": "integer", "minimum": 0 },
+    "destructive_actions": { "type": "integer", "minimum": 0 }
+  }
+}
