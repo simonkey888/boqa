@@ -55,7 +55,7 @@ test('two blind rounds meet every P2 threshold with reproducible reports', async
 
 test('committed evidence is aggregate-only and contains no private holdout manifest', () => {
   const resultDir = path.join(__dirname, '..', 'qualification', 'results');
-  const allowed = new Set(['aggregate-summary.json', 'confusion-matrix.json', 'report-quality-summary.json', 'scope-compliance.json']);
+  const allowed = new Set(['aggregate-summary.json', 'confusion-matrix.json', 'report-quality-summary.json', 'scope-compliance.json', 'economic-proxy.json']);
   const files = fs.readdirSync(resultDir);
   assert(files.every(file => allowed.has(file)), `unexpected result file: ${files.join(',')}`);
   const serialized = files.map(file => fs.readFileSync(path.join(resultDir, file), 'utf8')).join('\n');
