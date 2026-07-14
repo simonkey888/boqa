@@ -1,0 +1,76 @@
+name: BOQA fail-closed validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BOQA_ADMIN_EXECUTION_ENABLED: "false"
+      BOQA_AUTO_ANALYZE: "false"
+      BOQA_OTEL_ENABLED: "false"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - name: Checkout clean commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --fund=false
+
+      - name: Run complete suite
+        run: npm test
+
+      - name: Run dashboard smoke
+        run: npm run test:dashboard
+
+      - name: Run focused security gates
+        run: |
+          node test/test-execution-defaults.js
+          node test/test-p01-guard-integration.js
+          node test/test-p1-audit-telemetry.js
+          node test/test-p1a-telemetry-adversarial.js
+          node test/test-ci-security-policy.js
+
+      - name: Verify lockfile and whitespace
+        run: |
+          git diff --exit-code -- package-lock.json
+          git diff --check
+
+      - name: Scan changed files for secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ]; then BASE_SHA="$(git rev-parse HEAD^)"; fi
+          node scripts/scan-changed-secrets.js "$BASE_SHA" HEAD
+
+      - name: Validate workflow policy
+        run: node scripts/validate-workflow-policy.js
+
+      - name: Write non-sensitive validation evidence
+        run: node scripts/write-validation-evidence.js
+
+      - name: Upload validation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: boqa-validation-evidence-${{ github.sha }}
+          path: validation-evidence/summary.json
+          if-no-files-found: error
+          retention-days: 14
