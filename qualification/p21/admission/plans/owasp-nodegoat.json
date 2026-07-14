@@ -1,0 +1,10 @@
+{
+  "source_root": "NodeGoat-c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+  "build": "upstream package-lock install in acquisition phase",
+  "runtime": "non-root application plus internal digest-pinned MongoDB",
+  "dockerfile_sha256": "7d99545934a0f600af70962dc60a209c7f13b30f4bf6a947f2d0b742d455d8f6",
+  "runtime_manifest": "node@sha256:4517380049fc3c9aacceae7764fcf3500354b0ac8a47e4afb35b5bbeb75b9498",
+  "database_manifest": "mongo@sha256:4be76f674fc4b27859816811b8baa3c51830eb1dbf4ca81a51e26b79edd662ef",
+  "oracle": "source/lesson mapping withheld until BOQA completes",
+  "image_digest_policy": "compute locally and require sha256 before network attach"
+}

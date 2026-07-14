@@ -1,0 +1,10 @@
+{
+  "source_root": "BenchmarkJava-79b9bd6177e07991a9c11dc19e457c840e229931",
+  "build": "upstream Maven package in acquisition phase",
+  "runtime": "non-root local image assembled before isolated runtime",
+  "dockerfile_sha256": "f7183cc8fad9fee1183558039a5f998ec82c2320a47a1e28e484dad9dbcb674b",
+  "builder_manifest": "maven@sha256:e4a7ace3dc0d645ed97f8d9ad0b0d3f0b14fa8d150138f27f116d7105a639b82",
+  "runtime_manifest": "tomcat@sha256:fcf35a12fc228567f91484b076f40d3d6528c15beb7e24f13ade176bf4b6b2ca",
+  "oracle": "expected-results withheld until BOQA completes",
+  "image_digest_policy": "compute locally and require sha256 before network attach"
+}

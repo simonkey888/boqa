@@ -1,0 +1,26 @@
+services:
+  laboratory:
+    image: ${P21_NODEGOAT_IMAGE:?immutable local image required}
+    user: "10001:10001"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:size=32m,noexec,nosuid]
+    pids_limit: 96
+    mem_limit: 384m
+    cpus: 1.0
+    networks: [isolated]
+  database:
+    image: mongo@sha256:4be76f674fc4b27859816811b8baa3c51830eb1dbf4ca81a51e26b79edd662ef
+    user: mongodb
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/data/db:size=128m,nosuid, /tmp:size=16m,noexec,nosuid]
+    pids_limit: 96
+    mem_limit: 384m
+    cpus: 0.75
+    networks: [isolated]
+networks:
+  isolated:
+    internal: true
