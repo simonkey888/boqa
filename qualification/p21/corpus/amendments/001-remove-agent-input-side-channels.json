@@ -1,0 +1,14 @@
+{
+  "amendment": 1,
+  "previous_schema": "boqa.p21.external-corpus-freeze.v1",
+  "new_schema": "boqa.p21.external-corpus-freeze.v1.1",
+  "previous_freeze_sha256": "fcfd23443d8d1f2cdce3c9bc0648bb1bff19ebc527bd71e0cd21927930fcf8a8",
+  "reason": "Removed scenario_id, seed and corpus from the agent-visible input before external execution.",
+  "instances_executed": 0,
+  "rounds_completed": 0,
+  "oracle_labels_changed": false,
+  "upstream_case_selection_changed": false,
+  "vulnerable_cases": 12,
+  "negative_controls": 12,
+  "total_instances": 32
+}

@@ -1,6 +1,12 @@
 {
-  "schema": "boqa.p21.external-corpus-freeze.v1",
+  "schema": "boqa.p21.external-corpus-freeze.v1.1",
   "frozen_before_baseline": true,
+  "previous_freeze_sha256": "fcfd23443d8d1f2cdce3c9bc0648bb1bff19ebc527bd71e0cd21927930fcf8a8",
+  "amendment_reason": "Remove scenario ID, seed and scoring-track side channels from agent-visible input before any external execution.",
+  "amended_before_any_execution": true,
+  "instances_executed_at_amendment": 0,
+  "oracle_labels_changed": false,
+  "upstream_case_selection_changed": false,
   "corpus": {
     "total_instances": 32,
     "paired_instances": 24,
@@ -12,7 +18,7 @@
     "minimum_families": 6
   },
   "digests": {
-    "public_corpus_json_sha256": "2ffeb9a18f51d15276dd383f10b793b04df4e364b54bee66ecadf037faed15ea",
+    "public_corpus_json_sha256": "4ce85f02f83976f94a846ac71e770da4217274a65b3b9e7ba3a96219209a2c12",
     "private_oracle_source_sha256": "fdd507a61d0c29856c6af4e1d95b55dc043a7a43619742cfbf8e42d4508d0bbb",
     "scoring_policy_sha256": "95dfd50b43c20884f7fe5257eeced4d12ac3ee6c1226ff5d77f2e82dfae571cd",
     "admission_records_sha256": "a7cf8e8acb976f9a87aa7d6a7b0151e097445a7a1856809f1308094a5ae7915e"
@@ -33,7 +39,8 @@
     "opaque_hostnames": true,
     "opaque_paths": true,
     "fixed_agent_visible_port": 80,
-    "variant_equivalent_agent_input": true
+    "variant_equivalent_agent_input": true,
+    "agent_visible_fields": ["canonical_target_id", "authorized_url", "scope", "credentials", "budget", "run_handle"]
   },
   "runtime_provenance": {
     "owasp_benchmark": "BUILD_REQUIRED_BEFORE_BASELINE",
