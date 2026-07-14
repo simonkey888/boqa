@@ -92,6 +92,7 @@ class VerificationWorker extends EventEmitter {
     this.registry = options.registry || null;
     this.resolver = options.resolver;
     this.executionGuard = options.executionGuard || executionGuard;
+    this.telemetry = options.telemetry || null;
     this.browserEgressGuardFactory = options.browserEgressGuardFactory || (guardOptions => new BrowserEgressGuard(guardOptions));
     this._egressInstalledFor = null;
 
@@ -144,7 +145,11 @@ class VerificationWorker extends EventEmitter {
         // registry/DNS state again immediately before dispatch.
         const integrity = this.executionGuard.verifyTaskIntegrity(task);
         if (!integrity.allowed) throw new Error(`${integrity.code}: ${integrity.reason}`);
-        const authorization = await this.executionGuard.validateTaskAsync(task, this.registry, { resolver: this.resolver });
+        const authorization = await this.executionGuard.validateTaskAsync(task, this.registry, {
+          resolver: this.resolver,
+          telemetry: this.telemetry,
+          phase: 'worker_retry',
+        });
         if (!authorization.allowed) throw new Error(`${authorization.code}: ${authorization.reason}`);
 
         // Rate limiting
@@ -283,6 +288,8 @@ class VerificationWorker extends EventEmitter {
       params: { url, method },
     }, this.registry, {
       resolver: this.resolver,
+      telemetry: this.telemetry,
+      phase: 'primitive',
     });
     if (!result.allowed) throw new Error(`${result.code}: ${result.reason}`);
     return result;
@@ -296,6 +303,7 @@ class VerificationWorker extends EventEmitter {
       registry: this.registry,
       targetId: task.target_id,
       resolver: this.resolver,
+      telemetry: this.telemetry,
     });
     await policy.install(context);
     this._egressInstalledFor = context;
@@ -697,6 +705,7 @@ class VerificationFarm extends EventEmitter {
     this.registry = options.registry || null;
     this.resolver = options.resolver;
     this.executionGuard = options.executionGuard || executionGuard;
+    this.telemetry = options.telemetry || null;
     this.browserEgressGuardFactory = options.browserEgressGuardFactory;
 
     /** @type {Map<string, VerificationWorker>} worker_id → worker */
@@ -721,6 +730,7 @@ class VerificationFarm extends EventEmitter {
         resolver: this.resolver,
         executionGuard: this.executionGuard,
         browserEgressGuardFactory: this.browserEgressGuardFactory,
+        telemetry: this.telemetry,
       });
 
       worker.on('complete', ({ workerId, taskId, result }) => {
@@ -775,7 +785,11 @@ class VerificationFarm extends EventEmitter {
       submitted_at: Date.now(),
     };
 
-    const authorization = await this.executionGuard.validateTaskAsync(candidate, this.registry, { resolver: this.resolver });
+    const authorization = await this.executionGuard.validateTaskAsync(candidate, this.registry, {
+      resolver: this.resolver,
+      telemetry: this.telemetry,
+      phase: 'enqueue',
+    });
     if (!authorization.allowed) {
       return { error: `${authorization.code}: ${authorization.reason}`, task: null };
     }
@@ -825,8 +839,20 @@ class VerificationFarm extends EventEmitter {
 
       const integrity = this.executionGuard.verifyTaskIntegrity(task);
       const authorization = integrity.allowed
-        ? await this.executionGuard.validateTaskAsync(task, this.registry, { resolver: this.resolver })
+        ? await this.executionGuard.validateTaskAsync(task, this.registry, {
+          resolver: this.resolver,
+          telemetry: this.telemetry,
+          phase: 'dispatch',
+        })
         : integrity;
+      if (!integrity.allowed) {
+        this.telemetry?.recordSecurityDecision('task_integrity', integrity, {
+          phase: 'dispatch',
+          action: task.action,
+          target_id: task.target_id,
+          task_id: task.id,
+        });
+      }
       if (!authorization.allowed) {
         task.status = 'rejected';
         const result = {

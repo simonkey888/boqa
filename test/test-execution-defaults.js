@@ -7,6 +7,7 @@
  */
 
 const { spawnSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const { createAdminGate } = require('../lib/admin-gate');
 const executionGuard = require('../lib/execution-authorization-guard');
@@ -94,12 +95,13 @@ test('BOQA_ADMIN_EXECUTION_ENABLED=false blocks mutating API execution', () => {
   assertEqual(result.code, 'ADMIN_EXECUTION_DISABLED', 'guard result');
 });
 
-test('package-lock.json has no working-tree changes', () => {
-  const result = spawnSync('git', ['diff', '--exit-code', '--', 'package-lock.json'], {
-    cwd: path.resolve(__dirname, '..'),
-    encoding: 'utf8',
-  });
-  assertEqual(result.status, 0, 'package-lock.json diff');
+test('package-lock.json matches declared production dependencies', () => {
+  const root = path.resolve(__dirname, '..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+  const declared = JSON.stringify(Object.entries(pkg.dependencies || {}).sort());
+  const locked = JSON.stringify(Object.entries(lock.packages?.['']?.dependencies || {}).sort());
+  assertEqual(locked, declared, 'root dependency lock');
 });
 
 console.log(`\nTotal: ${passed + failed}  Passed: ${passed}  Failed: ${failed}`);

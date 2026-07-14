@@ -440,10 +440,12 @@ class Agent {
     this.registry = options.registry || null;
     this.resolver = options.resolver;
     this.executionGuard = options.executionGuard || executionGuard;
+    this.telemetry = options.telemetry || null;
     this.browserEgressGuard = options.browserEgressGuard || new BrowserEgressGuard({
       registry: this.registry,
       targetId: this.options.targetId,
       resolver: this.resolver,
+      telemetry: this.telemetry,
     });
 
     this.browser = null;
@@ -517,6 +519,8 @@ class Agent {
     };
     const startupAuthorization = await this.executionGuard.validateTaskAsync(startupTask, this.registry, {
       resolver: this.resolver,
+      telemetry: this.telemetry,
+      phase: 'agent_startup',
     });
     if (!startupAuthorization.allowed) {
       throw new Error(`${startupAuthorization.code}: ${startupAuthorization.reason}`);

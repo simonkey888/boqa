@@ -53,6 +53,7 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "@opentelemetry/api": "1.9.1",
     "chalk": "^4.1.2",
     "express": "^4.18.2",
     "jsondiffpatch": "^0.6.2",

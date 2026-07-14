@@ -11,6 +11,7 @@ FROM node:20-slim
 ENV BOQA_MODE=live
 ENV BOQA_AUTO_ANALYZE=false
 ENV BOQA_ADMIN_EXECUTION_ENABLED=false
+ENV BOQA_OTEL_ENABLED=false
 ENV HEADLESS=true
 
 # Install Playwright Chromium dependencies

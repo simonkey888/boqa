@@ -56,7 +56,7 @@ ctx.server = server;
 // ─── P0 SECURITY: Admin execution gate ──────────────────────────────────
 // Block ALL POST/PUT/PATCH/DELETE on /api/* when BOQA_ADMIN_EXECUTION_ENABLED != 'true'
 const { createAdminGate } = require('./lib/admin-gate');
-const adminGate = createAdminGate();
+const adminGate = createAdminGate({ telemetry: ctx.auditTelemetry });
 app.use('/api', adminGate);
 
 // ─── URGENT-5: Global API Auth Middleware ──────────────────────────────
