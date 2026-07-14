@@ -35,6 +35,7 @@ function assert(value, message) { if (!value) throw new Error(message); }
         assert(JSON.stringify(pair[0].limits.allowed_paths) === JSON.stringify(pair[1].limits.allowed_paths), 'paths leak variant');
         const inputs = pair.map(item => buildAgentInput(item, createFirstPartyRuntime(item)));
         assert(inputs.every(input => input.authorized_url === 'http://lab.internal'), 'URL shape differs');
+        assert(inputs[0].canonical_target_id === inputs[1].canonical_target_id, 'target ID leaks variant');
         assert(inputs.every(input => !JSON.stringify(input).match(/vulnerable|patched|CWE-/)), 'agent input leaks oracle');
       }
     }

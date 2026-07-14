@@ -1,0 +1,24 @@
+{
+  "aggregate": {
+    "TP": 40,
+    "FP": 0,
+    "TN": 40,
+    "FN": 0
+  },
+  "rounds": [
+    {
+      "round": "round-1",
+      "TP": 20,
+      "FP": 0,
+      "TN": 20,
+      "FN": 0
+    },
+    {
+      "round": "round-2",
+      "TP": 20,
+      "FP": 0,
+      "TN": 20,
+      "FN": 0
+    }
+  ]
+}

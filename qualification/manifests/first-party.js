@@ -30,7 +30,10 @@ function buildFirstPartyManifests(seeds = [1, 2, 3]) {
       for (const [variantIndex, variant] of ['vulnerable', 'patched'].entries()) {
         const paths = scenarioPaths(familyIndex, seed);
         manifests.push({
-          scenario_id: `P2-${String(familyIndex + 1).padStart(2, '0')}-${String(seed).padStart(3, '0')}-${variantIndex ? 'B' : 'A'}`,
+          // Paired variants intentionally share the same public identifier.
+          // `variant` remains private oracle data and is never encoded in the
+          // target ID, URL, path, port or runtime name given to the agent.
+          scenario_id: `P2-${String(familyIndex + 1).padStart(2, '0')}-${String(seed).padStart(3, '0')}`,
           family,
           variant,
           seed,
