@@ -394,11 +394,13 @@ class VerificationWorker extends EventEmitter {
         await this._ensureBrowserEgress(task);
         // Set cookies
         if (cookies) {
-          await this._authorizeUrl(task, task.params?.url, 'GET');
+          const cookieTargetUrl = task.params?.url;
+          if (!cookieTargetUrl) throw new Error('COOKIE_TARGET_URL_REQUIRED');
+          await this._authorizeUrl(task, cookieTargetUrl, 'GET');
           const cookieList = Object.entries(cookies).map(([name, value]) => ({
             name,
             value,
-            domain: new URL(task.params?.url || 'https://example.com').hostname,
+            domain: new URL(cookieTargetUrl).hostname,
             path: '/',
           }));
           await this.agent.page.context().addCookies(cookieList);

@@ -176,7 +176,7 @@ async function main() {
   console.log('  ║   Autonomous Decision Kernel                                  ║');
   console.log('  ╠═══════════════════════════════════════════════════════════════╣');
   console.log(`  ║  Mode:      ${modeLabel.padEnd(49)}║`);
-  console.log(`  ║  Target:    ${CONFIG.target.padEnd(49)}║`);
+  console.log(`  ║  Target:    ${(CONFIG.target || 'not configured').padEnd(49)}║`);
   console.log(`  ║  Session:   ${ctx.bus.sessionId.substring(0, 8).padEnd(49)}║`);
   console.log(`  ║  Dashboard: http://localhost:${String(CONFIG.port).padEnd(38)}║`);
   console.log(`  ║  Analyze:   every ${String(CONFIG.analyzeInterval + 's').padEnd(41)}║`);

@@ -18,7 +18,6 @@
  *   - cdp:     Connect to existing browser via CDP endpoint
  */
 
-const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
 
@@ -53,7 +52,7 @@ class PlaywrightRunner {
   constructor(eventBus, options = {}) {
     this.bus = eventBus;
     this.options = {
-      target: options.target || 'https://ripio.com',
+      target: options.target || null,
       headless: options.headless || false,
       devtools: options.devtools !== false,
       cdpEndpoint: options.cdpEndpoint || null,
@@ -79,81 +78,21 @@ class PlaywrightRunner {
    * Launch browser and attach all instrumentation hooks
    */
   async start() {
-    console.log(`[Runner] Starting Playwright — target: ${this.options.target}`);
-
-    if (this.options.cdpEndpoint) {
-      await this._connectCDP();
-    } else {
-      await this._launchBrowser();
-    }
-
-    // Create CDP session for deeper network access
-    if (!this.cdpSession) {
-      try {
-        this.cdpSession = await this.page.context().newCDPSession(this.page);
-        console.log('[Runner] CDP session established');
-      } catch (e) {
-        console.warn('[Runner] CDP session failed:', e.message);
-      }
-    }
-
-    // Attach all hooks
-    this._hookNetwork();
-    this._hookWebSocket();
-    this._hookConsole();
-    this._hookNavigation();
-    this._startCookiePolling();
-    this._startPerformancePolling();
-
-    // Inject document-start instrumentation
-    await this._injectInstrumentation();
-
-    // Navigate to target
-    console.log(`[Runner] Navigating to ${this.options.target}`);
-    await this.page.goto(this.options.target, { waitUntil: 'domcontentloaded', timeout: 60000 });
-
-    return this.page;
+    throw new Error('SECURITY_DISABLED: legacy PlaywrightRunner is quarantined');
   }
 
   /**
    * Launch fresh Chromium instance
    */
   async _launchBrowser() {
-    const contextOpts = {
-      viewport: this.options.viewport,
-      ignoreHTTPSErrors: true,
-    };
-
-    if (this.options.recordHar) {
-      contextOpts.recordHar = { path: this.options.harPath };
-    }
-
-    this.browser = await chromium.launch({
-      headless: this.options.headless,
-      devtools: this.options.devtools,
-      slowMo: this.options.slowMo,
-      args: [
-        '--disable-blink-features=AutomationControlled',
-        '--no-first-run',
-        '--disable-features=TranslateUI',
-      ],
-    });
-
-    this.context = await this.browser.newContext(contextOpts);
-    this.page = await this.context.newPage();
-
-    console.log('[Runner] Browser launched in headed mode');
+    throw new Error('SECURITY_DISABLED: legacy PlaywrightRunner is quarantined');
   }
 
   /**
    * Connect to existing browser via CDP
    */
   async _connectCDP() {
-    this.browser = await chromium.connectOverCDP(this.options.cdpEndpoint);
-    this.context = this.browser.contexts()[0] || await this.browser.newContext();
-    this.page = this.context.pages()[0] || await this.context.newPage();
-
-    console.log(`[Runner] Connected via CDP to ${this.options.cdpEndpoint}`);
+    throw new Error('SECURITY_DISABLED: legacy PlaywrightRunner CDP is quarantined');
   }
 
   /**
@@ -644,4 +583,3 @@ class PlaywrightRunner {
 }
 
 module.exports = { PlaywrightRunner, AUTH_PATTERNS, AUTH_COOKIES, AUTH_HEADERS };
-

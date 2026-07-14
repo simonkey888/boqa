@@ -424,7 +424,7 @@ class Agent {
     this.intel = new AuthIntelligence();
     this.anomaly = new AnomalyEngine(options.baseline || null);
     this.options = {
-      target: options.target || 'https://example.com',
+      target: options.target || null,
       targetId: options.targetId || null,
       headless: options.headless || false,
       devtools: options.devtools !== false,
@@ -663,11 +663,7 @@ class Agent {
   }
 
   async _connectCDP() {
-    this.browser = await chromium.connectOverCDP(this.options.cdpEndpoint);
-    this.context = this.browser.contexts()[0] || await this.browser.newContext();
-    await this.browserEgressGuard.install(this.context);
-    this.page = this.context.pages()[0] || await this.context.newPage();
-    console.log(`[Agent] CDP bridge: ${this.options.cdpEndpoint}`);
+    throw new Error('CDP_ENDPOINT_DISABLED_BY_EGRESS_POLICY');
   }
 
   // ─── Network Hooks ─────────────────────────────────────────────

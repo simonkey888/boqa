@@ -14,7 +14,7 @@
     "verify": "node server.js --mode=verify",
     "continuous": "node server.js --mode=continuous",
     "ci": "node ci/runner.js --config ci/config.json",
-    "demo": "node server.js --mode=live --target https://ripio.com",
+    "demo": "node scripts/demo-disabled.js",
     "analyze": "curl -X POST http://localhost:7070/api/analyze",
     "verify-queue": "curl http://localhost:7070/api/verification-queue",
     "metrics": "curl http://localhost:7070/api/metrics",
