@@ -1,0 +1,7 @@
+{
+  "source_root": "NodeGoat-c5cb68a7084e4ae7dcc60e6a98768720a81841e8",
+  "build": "upstream package-lock install in acquisition phase",
+  "runtime": "non-root application plus internal digest-pinned MongoDB",
+  "oracle": "source/lesson mapping withheld until BOQA completes",
+  "image_digest_policy": "compute locally and require sha256 before network attach"
+}

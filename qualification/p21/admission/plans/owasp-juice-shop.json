@@ -1,0 +1,7 @@
+{
+  "source_root": "juice-shop-c8c407d503ce9c8e6582b39b40db84db06989744",
+  "build": "use upstream v19.1.1 image pinned by immutable manifest digest",
+  "runtime": "upstream non-root user with no persistent volume",
+  "oracle": "challenge definitions withheld until BOQA completes",
+  "image_digest_policy": "require exact committed sha256 manifest digest"
+}

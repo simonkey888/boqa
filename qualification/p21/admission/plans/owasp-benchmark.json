@@ -1,0 +1,7 @@
+{
+  "source_root": "BenchmarkJava-79b9bd6177e07991a9c11dc19e457c840e229931",
+  "build": "upstream Maven package in acquisition phase",
+  "runtime": "non-root local image assembled before isolated runtime",
+  "oracle": "expected-results withheld until BOQA completes",
+  "image_digest_policy": "compute locally and require sha256 before network attach"
+}

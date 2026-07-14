@@ -1,0 +1,15 @@
+services:
+  laboratory:
+    image: bkimminich/juice-shop@sha256:67b87bff95f5719f9a31ab2bcf48cacc30fcc30d4662c2047ca0c0b8b4b7ebae
+    user: "65532:65532"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:size=32m,noexec,nosuid]
+    pids_limit: 96
+    mem_limit: 512m
+    cpus: 1.0
+    networks: [isolated]
+networks:
+  isolated:
+    internal: true
