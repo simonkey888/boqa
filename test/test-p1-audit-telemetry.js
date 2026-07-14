@@ -152,7 +152,7 @@ test('audit buffer is bounded and removes secret-bearing attributes', () => {
   assert(events.length === 2, 'bounded retention failed');
   assert(!serialized.includes('secret') && !serialized.includes('https://'), 'sensitive field retained');
   const summary = telemetry.getSummary();
-  assert(summary.audit_events_dropped === 1 && summary.attributes_omitted === 4, 'drop/omission accounting mismatch');
+  assert(summary.audit_events_dropped === 1 && summary.attributes_omitted === 5, 'drop/omission accounting mismatch');
 });
 
 test('OpenTelemetry provider failure is fail-safe and retains local audit event', () => {

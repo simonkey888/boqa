@@ -26,6 +26,7 @@ const crypto = require('crypto');
 const { EventEmitter } = require('events');
 const executionGuard = require('./lib/execution-authorization-guard');
 const { BrowserEgressGuard } = require('./lib/browser-egress-guard');
+const { safeRecordSecurityDecision } = require('./lib/audit-telemetry');
 
 // ─── Worker States ──────────────────────────────────────────────────
 
@@ -846,11 +847,9 @@ class VerificationFarm extends EventEmitter {
         })
         : integrity;
       if (!integrity.allowed) {
-        this.telemetry?.recordSecurityDecision('task_integrity', integrity, {
+        safeRecordSecurityDecision(this.telemetry, 'task_integrity', integrity, {
           phase: 'dispatch',
           action: task.action,
-          target_id: task.target_id,
-          task_id: task.id,
         });
       }
       if (!authorization.allowed) {
