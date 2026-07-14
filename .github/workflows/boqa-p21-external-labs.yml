@@ -1,0 +1,81 @@
+name: BOQA P2.1 external lab reality check
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-p21-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  BOQA_OTEL_ENABLED: "false"
+  BOQA_AUTO_ANALYZE: "false"
+  BOQA_ADMIN_EXECUTION_ENABLED: "false"
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+jobs:
+  admission-and-plane-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout clean commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --fund=false
+      - name: Run P1 and P2 regression gates
+        run: |
+          npm test
+          npm run test:p2
+      - name: Validate Docker execution-plane policy
+        run: node test/test-p21a-docker-plane-policy.js
+      - name: Acquisition phase - build fixed-version smoke image
+        run: docker pull node:20.19.4-alpine3.21
+      - name: Isolated runtime smoke
+        run: bash qualification/p21/runners/docker-plane.sh
+      - name: Validate repository policy
+        run: |
+          node scripts/validate-workflow-policy.js
+          git diff --check
+          git diff --exit-code -- package-lock.json
+      - name: Scan changed files for secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/scan-changed-secrets.js "$BASE_SHA" HEAD
+      - name: Upload non-sensitive plane evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: boqa-p21-plane-${{ github.sha }}
+          path: qualification/results/p21-plane-smoke.json
+          if-no-files-found: error
+          retention-days: 14
+
+  full-external-baseline:
+    if: github.event_name == 'workflow_dispatch'
+    needs: admission-and-plane-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout clean commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Acquisition phase - install locked dependencies
+        run: npm ci --no-audit --fund=false
+      - name: Full external-lab campaign
+        run: bash qualification/p21/runners/full-external-labs.sh
