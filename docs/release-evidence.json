@@ -1,0 +1,17 @@
+{
+  "base_sha": "989b32d3213300c6941da73e7a764228e14f52ab",
+  "head_sha": "618672c642d90fd50e95064be517bdf505f19275",
+  "tree_sha": "7dadf542b8785582a6f9af6d0cab5b6f3553270f",
+  "commit_count": 30,
+  "changed_file_count": 59,
+  "test_file_count": 31,
+  "integration_fixture_count": 45,
+  "ci_status": "SUCCESS",
+  "secret_scan": "PASS",
+  "package_lock_changed_in_final_pipeline": false,
+  "production_accessed": false,
+  "production_modified": false,
+  "deployment_performed": false,
+  "dns_rebinding_fully_mitigated": false,
+  "annotated_tag_published": false
+}
