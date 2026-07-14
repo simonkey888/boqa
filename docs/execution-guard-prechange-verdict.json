@@ -1,0 +1,24 @@
+{
+  "baseline_head": "dd94f5b3a04b5e93e120ac9f6d98efa9b76fecae",
+  "all_enqueue_paths_guarded": false,
+  "all_execution_paths_revalidated": false,
+  "all_url_fields_covered": false,
+  "async_dns_used_before_execution": false,
+  "redirects_guarded": false,
+  "browser_subrequests_guarded": false,
+  "websockets_guarded": false,
+  "dns_rebinding_fully_mitigated": false,
+  "task_mutation_after_validation_possible": true,
+  "persistence_restore_revalidated": false,
+  "evidence": {
+    "guard_runtime_callers": "none outside test/test-execution-guard.js",
+    "mutable_enqueue": "verification-farm.js submitTask assigns params: task.params || {}",
+    "dispatch_without_revalidation": "verification-farm.js processQueue calls idleWorker.execute(task) directly",
+    "internal_enqueue": "coverage-planner.js _executeVerify and campaign-engine.js executeIteration call submitTask directly",
+    "startup_navigation": "server.js main calls ctx.agent.start; agent.js start calls page.goto",
+    "dns": "validateTask calls validateUrl; validateUrlAsync and validateRedirect have no runtime callers",
+    "subrequests": "agent.js observes request/websocket/navigation events but registers no context.route/page.route interceptor",
+    "scope": "matchesScope returns true for any pathname when an origin-bearing pattern hostname matches",
+    "persistence": "target-runner.js resumeFromCheckpoint re-submits target_url without the execution guard"
+  }
+}

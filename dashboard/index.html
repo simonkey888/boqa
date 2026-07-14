@@ -13,19 +13,7 @@
 </head>
 <body>
 
-  <!-- 1. AUTH GATE (Bloqueo de acceso local para Northflank) — hidden by default -->
-  <div class="auth-gate-modal hidden" id="auth-gate">
-    <div class="auth-gate-card">
-      <div class="brand-dot"></div>
-      <h3>BOQA IA Hunter</h3>
-      <p>Ingrese su clave secreta (BOQA_API_KEY) para conectar con el agente en la nube.</p>
-      <input type="password" id="auth-gate-input" placeholder="Clave API" autocomplete="off" spellcheck="false" />
-      <button class="btn-primary" id="auth-gate-btn" style="width: 100%;">Conectar Consola</button>
-      <div class="auth-gate-error hidden" id="auth-gate-error">Clave inválida o servidor inactivo.</div>
-    </div>
-  </div>
-
-  <!-- 2. LAYOUT PRINCIPAL -->
+  <!-- LAYOUT PRINCIPAL -->
   <div class="twenty-layout">
 
     <!-- Barra Lateral -->
@@ -68,6 +56,16 @@
             <span class="metric-title">Uptime del Servidor</span>
             <span class="metric-value text-green" id="m-uptime">00:00:00</span>
           </div>
+        </div>
+        <div class="card" id="system-status" aria-live="polite">
+          <div class="card-header">Estado operativo</div>
+          <div class="detail-value" id="status-worker">Worker: verificando</div>
+          <div class="detail-value" id="status-backend">Backend: verificando</div>
+          <div class="detail-value" id="status-hunter">Hunter: verificando</div>
+          <div class="detail-value" id="status-replay">Replay: verificando</div>
+          <div class="detail-value" id="status-target">Target: verificando</div>
+          <div class="detail-value" id="status-findings">Reportables: verificando</div>
+          <div class="detail-value" id="status-safe-mode">Análisis: verificando</div>
         </div>
 
         <!-- Cyber Pitch 3D + Consola compacta -->
@@ -123,6 +121,7 @@
 
     </main>
   </div>
+  <script src="/app.js"></script>
 </body>
 </html>
 <!-- v:1783656281 -->

@@ -501,7 +501,7 @@ class CampaignEngine extends EventEmitter {
    * @param {string} campaignId
    * @returns {object} iteration results
    */
-  executeIteration(campaignId) {
+  async executeIteration(campaignId) {
     const campaign = this.campaigns.get(campaignId);
     if (!campaign) throw new Error(`Campaign not found: ${campaignId}`);
 
@@ -552,7 +552,7 @@ class CampaignEngine extends EventEmitter {
       for (const hyp of hypotheses) {
         if (this.verificationFarm) {
           try {
-            const { task } = this.verificationFarm.submitTask({
+            const { task } = await this.verificationFarm.submitTaskAsync({
               hypothesis_id: hyp.id,
               target_id: targetId,
               type: hyp.verification_cost === 'low' ? 'replay' : 'state_diff',
@@ -613,7 +613,7 @@ class CampaignEngine extends EventEmitter {
 
     this._clearTimer(campaignId);
 
-    const timer = setInterval(() => {
+    const timer = setInterval(async () => {
       try {
         // Check if campaign should still run
         if (campaign.budgetExceeded()) {
@@ -631,7 +631,7 @@ class CampaignEngine extends EventEmitter {
           campaign.startRun();
         }
 
-        this.executeIteration(campaignId);
+        await this.executeIteration(campaignId);
 
         if (campaign.current_run) {
           campaign.endRun({ status: 'running' });
@@ -750,4 +750,3 @@ class CampaignEngine extends EventEmitter {
 }
 
 module.exports = { CampaignEngine, Campaign, CAMPAIGN_TYPES, CAMPAIGN_STATES, CAMPAIGNS_DIR };
-

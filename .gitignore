@@ -39,3 +39,4 @@ wrangler.toml.local
 # Playwright
 /playwright-report/
 /test-results/
+/validation-evidence/

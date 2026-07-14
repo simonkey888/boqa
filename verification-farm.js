@@ -24,6 +24,9 @@
 
 const crypto = require('crypto');
 const { EventEmitter } = require('events');
+const executionGuard = require('./lib/execution-authorization-guard');
+const { BrowserEgressGuard } = require('./lib/browser-egress-guard');
+const { safeRecordSecurityDecision } = require('./lib/audit-telemetry');
 
 // ─── Worker States ──────────────────────────────────────────────────
 
@@ -87,6 +90,12 @@ class VerificationWorker extends EventEmitter {
     this.rateLimitMs = options.rateLimitMs || DEFAULT_RATE_LIMIT_MS;
     this.maxRetries = options.maxRetries || DEFAULT_MAX_RETRIES;
     this.agent = options.agent || null;
+    this.registry = options.registry || null;
+    this.resolver = options.resolver;
+    this.executionGuard = options.executionGuard || executionGuard;
+    this.telemetry = options.telemetry || null;
+    this.browserEgressGuardFactory = options.browserEgressGuardFactory || (guardOptions => new BrowserEgressGuard(guardOptions));
+    this._egressInstalledFor = null;
 
     this.state = WORKER_STATES.IDLE;
     this.currentTask = null;
@@ -132,6 +141,17 @@ class VerificationWorker extends EventEmitter {
 
       while (attempts <= this.maxRetries) {
         attempts++;
+
+        // A retry is a new outbound attempt: verify immutability and current
+        // registry/DNS state again immediately before dispatch.
+        const integrity = this.executionGuard.verifyTaskIntegrity(task);
+        if (!integrity.allowed) throw new Error(`${integrity.code}: ${integrity.reason}`);
+        const authorization = await this.executionGuard.validateTaskAsync(task, this.registry, {
+          resolver: this.resolver,
+          telemetry: this.telemetry,
+          phase: 'worker_retry',
+        });
+        if (!authorization.allowed) throw new Error(`${authorization.code}: ${authorization.reason}`);
 
         // Rate limiting
         await this._enforceRateLimit();
@@ -262,6 +282,34 @@ class VerificationWorker extends EventEmitter {
 
   // ─── Action Implementations ──────────────────────────────────────
 
+  async _authorizeUrl(task, url, method = 'GET') {
+    const result = await this.executionGuard.validateTaskAsync({
+      action: 'navigation',
+      target_id: task.target_id,
+      params: { url, method },
+    }, this.registry, {
+      resolver: this.resolver,
+      telemetry: this.telemetry,
+      phase: 'primitive',
+    });
+    if (!result.allowed) throw new Error(`${result.code}: ${result.reason}`);
+    return result;
+  }
+
+  async _ensureBrowserEgress(task) {
+    if (!this.agent?.page) return;
+    const context = this.agent.page.context();
+    if (this._egressInstalledFor === context) return;
+    const policy = this.browserEgressGuardFactory({
+      registry: this.registry,
+      targetId: task.target_id,
+      resolver: this.resolver,
+      telemetry: this.telemetry,
+    });
+    await policy.install(context);
+    this._egressInstalledFor = context;
+  }
+
   async _executeNavigation(task, result) {
     const { url, expected_status, expected_redirect } = task.params || {};
 
@@ -274,6 +322,8 @@ class VerificationWorker extends EventEmitter {
     // If we have a Playwright agent, perform real navigation
     if (this.agent && this.agent.page) {
       try {
+        await this._authorizeUrl(task, url, 'GET');
+        await this._ensureBrowserEgress(task);
         const response = await this.agent.page.goto(url, {
           waitUntil: 'domcontentloaded',
           timeout: this.timeout,
@@ -341,12 +391,16 @@ class VerificationWorker extends EventEmitter {
     // Replay requests using agent if available
     if (this.agent && this.agent.page) {
       try {
+        await this._ensureBrowserEgress(task);
         // Set cookies
         if (cookies) {
+          const cookieTargetUrl = task.params?.url;
+          if (!cookieTargetUrl) throw new Error('COOKIE_TARGET_URL_REQUIRED');
+          await this._authorizeUrl(task, cookieTargetUrl, 'GET');
           const cookieList = Object.entries(cookies).map(([name, value]) => ({
             name,
             value,
-            domain: new URL(task.params?.url || 'https://example.com').hostname,
+            domain: new URL(cookieTargetUrl).hostname,
             path: '/',
           }));
           await this.agent.page.context().addCookies(cookieList);
@@ -354,6 +408,7 @@ class VerificationWorker extends EventEmitter {
 
         // Replay sequence
         for (const req of (request_sequence || [])) {
+          await this._authorizeUrl(task, req.url, req.method || 'GET');
           const response = await this.agent.page.goto(req.url, {
             waitUntil: 'domcontentloaded',
             timeout: this.timeout,
@@ -396,6 +451,8 @@ class VerificationWorker extends EventEmitter {
 
     if (this.agent && this.agent.page) {
       try {
+        await this._authorizeUrl(task, url, method || 'GET');
+        await this._ensureBrowserEgress(task);
         const response = await this.agent.page.evaluate(async ({ method, url, headers, body }) => {
           const opts = { method, headers: headers || {} };
           if (body) opts.body = JSON.stringify(body);
@@ -505,9 +562,11 @@ class VerificationWorker extends EventEmitter {
 
     if (this.agent && this.agent.page && steps) {
       try {
+        await this._ensureBrowserEgress(task);
         for (let i = 0; i < steps.length; i++) {
           const step = steps[i];
           if (step.action === 'navigate') {
+            await this._authorizeUrl(task, step.url, step.method || 'GET');
             await this.agent.page.goto(step.url, {
               waitUntil: 'domcontentloaded',
               timeout: this.timeout,
@@ -646,6 +705,11 @@ class VerificationFarm extends EventEmitter {
     this.rateLimitMs = options.rateLimitMs || DEFAULT_RATE_LIMIT_MS;
     this.agent = options.agent || null;
     this.kb = options.knowledgeBase || null;
+    this.registry = options.registry || null;
+    this.resolver = options.resolver;
+    this.executionGuard = options.executionGuard || executionGuard;
+    this.telemetry = options.telemetry || null;
+    this.browserEgressGuardFactory = options.browserEgressGuardFactory;
 
     /** @type {Map<string, VerificationWorker>} worker_id → worker */
     this.workers = new Map();
@@ -665,6 +729,11 @@ class VerificationFarm extends EventEmitter {
         timeout: this.timeout,
         rateLimitMs: this.rateLimitMs,
         agent: this.agent,
+        registry: this.registry,
+        resolver: this.resolver,
+        executionGuard: this.executionGuard,
+        browserEgressGuardFactory: this.browserEgressGuardFactory,
+        telemetry: this.telemetry,
       });
 
       worker.on('complete', ({ workerId, taskId, result }) => {
@@ -681,6 +750,11 @@ class VerificationFarm extends EventEmitter {
 
   // ─── Task Management ─────────────────────────────────────────────
 
+  setAgent(agent) {
+    this.agent = agent;
+    for (const worker of this.workers.values()) worker.agent = agent;
+  }
+
   /**
    * Submit a verification task to the farm.
    *
@@ -693,13 +767,17 @@ class VerificationFarm extends EventEmitter {
    * @returns {object} the queued task with id
    */
   submitTask(task) {
+    return { error: 'ASYNC_EXECUTION_GUARD_REQUIRED: use submitTaskAsync()', task: null };
+  }
+
+  async submitTaskAsync(task) {
     // Validate action
-    if (FORBIDDEN_ACTIONS.has(task.action)) {
-      return { error: `Forbidden action: ${task.action}`, task: null };
+    if (!task || FORBIDDEN_ACTIONS.has(task.action)) {
+      return { error: task ? `Forbidden action: ${task.action}` : 'Task is required', task: null };
     }
 
     const taskId = task.id || `TSK-${crypto.randomUUID().substring(0, 8)}`;
-    const queuedTask = {
+    const candidate = {
       id: taskId,
       hypothesis_id: task.hypothesis_id,
       action: task.action,
@@ -709,6 +787,17 @@ class VerificationFarm extends EventEmitter {
       status: 'queued',
       submitted_at: Date.now(),
     };
+
+    const authorization = await this.executionGuard.validateTaskAsync(candidate, this.registry, {
+      resolver: this.resolver,
+      telemetry: this.telemetry,
+      phase: 'enqueue',
+    });
+    if (!authorization.allowed) {
+      return { error: `${authorization.code}: ${authorization.reason}`, task: null };
+    }
+
+    const queuedTask = this.executionGuard.sealTask(candidate);
 
     this.tasks.set(taskId, queuedTask);
     this.pendingQueue.push(queuedTask);
@@ -726,7 +815,12 @@ class VerificationFarm extends EventEmitter {
    * @returns {object[]} queued tasks
    */
   submitBatch(tasks) {
-    return tasks.map(t => this.submitTask(t)).filter(r => !r.error).map(r => r.task);
+    return [];
+  }
+
+  async submitBatchAsync(tasks) {
+    const results = await Promise.all(tasks.map(task => this.submitTaskAsync(task)));
+    return results.filter(result => !result.error).map(result => result.task);
   }
 
   /**
@@ -745,6 +839,34 @@ class VerificationFarm extends EventEmitter {
 
       const task = this.pendingQueue.shift();
       if (!task) break;
+
+      const integrity = this.executionGuard.verifyTaskIntegrity(task);
+      const authorization = integrity.allowed
+        ? await this.executionGuard.validateTaskAsync(task, this.registry, {
+          resolver: this.resolver,
+          telemetry: this.telemetry,
+          phase: 'dispatch',
+        })
+        : integrity;
+      if (!integrity.allowed) {
+        safeRecordSecurityDecision(this.telemetry, 'task_integrity', integrity, {
+          phase: 'dispatch',
+          action: task.action,
+        });
+      }
+      if (!authorization.allowed) {
+        task.status = 'rejected';
+        const result = {
+          task_id: task.id,
+          hypothesis_id: task.hypothesis_id,
+          verdict: 'rejected',
+          reason: `${authorization.code}: ${authorization.reason}`,
+          evidence: [],
+        };
+        this.results.set(task.id, result);
+        results.push(result);
+        continue;
+      }
 
       task.status = 'running';
       task.worker_id = idleWorker.id;
@@ -863,4 +985,3 @@ class VerificationFarm extends EventEmitter {
 }
 
 module.exports = { VerificationFarm, VerificationWorker, WORKER_STATES, ALLOWED_ACTIONS, FORBIDDEN_ACTIONS };
-

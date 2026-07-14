@@ -5,7 +5,7 @@
  *  - PRODUCTION: BOQA_BACKEND_URL is set → all /api/* and /ws requests are
  *    proxied to the Node.js backend (Northflank, Render, etc.)
  *  - DEMO: BOQA_BACKEND_URL is unset → the Worker itself validates X-API-Key
- *    against BOQA_API_KEY (default "BOQA123") and returns mock data so the
+ *    against the BOQA_API_KEY secret binding and returns mock data so the
  *    dashboard is fully browsable without a backend.
  *
  * HMAC signing (defense in depth):
@@ -49,8 +49,6 @@ async function computeHmacSignature(secret, method, path, ts, bodyStr) {
 }
 
 // ─── Demo data (used when BOQA_BACKEND_URL is unset) ────────────────────
-
-const DEMO_API_KEY = 'BOQA123';
 
 const DEMO_BUGS = [
   {
@@ -210,9 +208,9 @@ function demoJsonEvidence(bugId) {
 // ─── Auth check (demo mode) ─────────────────────────────────────────────
 
 function isAuthorized(request, env) {
-  const expectedKey = (env && env.BOQA_API_KEY) || DEMO_API_KEY;
+  const expectedKey = env && env.BOQA_API_KEY;
   const provided = request.headers.get('X-API-Key') || new URL(request.url).searchParams.get('api_key');
-  return provided === expectedKey;
+  return !!expectedKey && provided === expectedKey;
 }
 
 function unauthorizedResponse() {
@@ -351,19 +349,22 @@ async function proxyToBackend(request, env) {
 
   // ─── API key forwarding ─────────────────────────────────────────────
   // If the backend has BOQA_API_KEY set, every request MUST include the
-  // matching X-API-Key header. The Worker sends it from its own env var
-  // (or defaults to BOQA123 for backward compat with the demo key).
-  // If the backend has BOQA_API_KEY unset (open mode), this header is ignored.
-  const workerApiKey = env.BOQA_API_KEY || 'BOQA123';
-  if (!proxyHeaders.has('X-API-Key')) {
-    proxyHeaders.set('X-API-Key', workerApiKey);
+  // matching X-API-Key header. The Worker always overwrites any browser value
+  // with its own secret binding and fails closed when secrets are missing.
+  const workerApiKey = env.BOQA_API_KEY;
+  const hmacSecret = env.BOQA_HMAC_SECRET;
+  if (!workerApiKey || !hmacSecret) {
+    return new Response(JSON.stringify({ error: 'worker_auth_not_configured' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
+  proxyHeaders.set('X-API-Key', workerApiKey);
 
   // ─── HMAC signing (defense in depth) ────────────────────────────────
   // If BOQA_HMAC_SECRET is set on the Worker, sign every proxied request.
   // The backend will reject any request without a valid signature, even if
   // someone bypasses Cloudflare and hits the VPS IP directly.
-  const hmacSecret = env.BOQA_HMAC_SECRET;
   let bodyForProxy = request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined;
 
   if (hmacSecret) {
@@ -442,6 +443,71 @@ async function proxyToBackend(request, env) {
   }
 }
 
+// ─── P0 SECURITY: Public API allowlist (strictly read-only) ────────────
+//
+// The public Worker MUST NOT proxy mutating requests (POST/PUT/PATCH/DELETE)
+// or dangerous GET routes. Only whitelisted GET/HEAD routes are forwarded.
+// Everything else is blocked at the Worker edge — never signed, never proxied.
+
+const PUBLIC_API_ALLOWLIST = new Set([
+  '/api/health',
+  '/api/replay/health',
+  '/api/runtime/metrics',
+  '/api/bugs',
+  '/api/findings/summary',
+  '/api/reportability',
+  '/api/bounty-estimates',
+  '/api/portfolio',
+  '/api/targets',
+  '/api/coverage',
+]);
+
+// Routes that are explicitly BLOCKED even if they look like GET
+const BLOCKED_API_PATTERNS = [
+  /^\/api\/verification-queue/,
+  /^\/api\/discovery/,
+  /^\/api\/hypotheses/,
+  /^\/api\/analyze/,
+  /^\/api\/scheduler/,
+  /^\/api\/campaigns/,
+  /^\/api\/decision-run/,
+  /^\/api\/allocation/,
+  /^\/api\/uncertainty/,
+  /^\/api\/counterfactual/,
+  /^\/api\/stability/,
+  /^\/api\/alignment/,
+  /^\/api\/policy/,
+  /^\/api\/comparator/,
+  /^\/api\/economic/,
+  /^\/api\/disclosure/,
+  /^\/api\/replay\/(?!health)/,  // replay execution (not /api/replay/health which is allowed)
+  /^\/api\/s6/,
+  /^\/api\/execute/,
+  /^\/api\/admin/,
+];
+
+function checkPublicApiAccess(method, pathname) {
+  // Block all non-GET/HEAD methods on /api/*
+  if (method !== 'GET' && method !== 'HEAD') {
+    return { allowed: false, status: 405, error: 'method_not_allowed', message: 'Only GET/HEAD requests are permitted on the public API.' };
+  }
+
+  // Check explicit blocklist first
+  for (const pattern of BLOCKED_API_PATTERNS) {
+    if (pattern.test(pathname)) {
+      return { allowed: false, status: 403, error: 'route_blocked', message: 'This API route is not available on the public Worker.' };
+    }
+  }
+
+  // Check allowlist (strip query string — already done by URL parsing)
+  if (PUBLIC_API_ALLOWLIST.has(pathname)) {
+    return { allowed: true };
+  }
+
+  // Default deny
+  return { allowed: false, status: 404, error: 'route_not_found', message: 'API route not found on public Worker.' };
+}
+
 // ─── Main Worker entry ──────────────────────────────────────────────────
 
 export default {
@@ -449,24 +515,30 @@ export default {
     const url = new URL(request.url);
     const backendConfigured = !!(env && env.BOQA_BACKEND_URL);
 
-    // /api/* → demo mode OR proxy
+    // /api/* → P0 SECURITY: enforce read-only allowlist before proxying
     if (url.pathname.startsWith('/api/')) {
+      // P0: Check public access BEFORE doing anything else
+      const access = checkPublicApiAccess(request.method, url.pathname);
+      if (!access.allowed) {
+        return new Response(
+          JSON.stringify({ error: access.error, message: access.message }),
+          { status: access.status, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Only reach here for allowed GET/HEAD on whitelisted routes
       if (backendConfigured) {
         return proxyToBackend(request, env);
       }
       return handleDemoApi(request, env);
     }
 
-    // /ws → only meaningful in production mode (Worker can proxy WS upgrade)
+    // /ws → P0: Block WebSocket from public (was proxied to backend, could be abused)
     if (url.pathname === '/ws') {
-      if (backendConfigured) {
-        return proxyToBackend(request, env);
-      }
-      // Demo mode: WS not supported, return 426 Upgrade Required
       return new Response(
         JSON.stringify({
-          error: 'websocket_unavailable_in_demo',
-          message: 'WebSocket streaming requires the BOQA backend. Set BOQA_BACKEND_URL to enable real-time events.',
+          error: 'websocket_blocked_public',
+          message: 'WebSocket is not available on the public Worker. Dashboard uses HTTP polling.',
         }),
         { status: 426, headers: { 'Content-Type': 'application/json' } }
       );
@@ -481,7 +553,6 @@ export default {
           time: new Date().toISOString(),
           mode: backendConfigured ? 'production' : 'demo',
           backend_configured: backendConfigured,
-          default_api_key: 'BOQA123',
         }),
         {
           status: 200,

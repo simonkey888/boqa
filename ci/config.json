@@ -1,14 +1,6 @@
 {
-  "targets": [
-    {
-      "name": "ripio-production",
-      "url": "https://ripio.com",
-      "duration": 120,
-      "severity_threshold": 40,
-      "auth_regression_threshold": 70
-    }
-  ],
-  "baseline_auto_create": true,
+  "targets": [],
+  "baseline_auto_create": false,
   "headless": true,
   "exit_codes": {
     "0": "clean — no anomalies above threshold",
@@ -23,4 +15,3 @@
     "ndjson": true
   }
 }
-

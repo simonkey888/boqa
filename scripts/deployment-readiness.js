@@ -86,17 +86,20 @@ const runtimeEnvManifest = {
   required_env_vars: [
     { name: 'BOQA_API_KEY', description: 'API key for protected routes', required: true, secret: true },
     { name: 'BOQA_MODE', description: 'Operation mode (live|baseline|compare)', required: false, default: 'live' },
-    { name: 'BOQA_TARGET', description: 'Target URL for observation', required: false, default: 'https://ripio.com' },
+    { name: 'BOQA_TARGET', description: 'Explicit target URL; requires canonical target authorization', required: true, default: null },
+    { name: 'BOQA_TARGET_ID', description: 'Canonical authorized target ID', required: true, default: null },
     { name: 'BOQA_PORT', description: 'HTTP server port', required: false, default: '7070' },
     { name: 'HEADLESS', description: 'Run browser in headless mode', required: false, default: 'false' },
     { name: 'BOQA_DURATION', description: 'Auto-shutdown after N seconds (0=never)', required: false, default: '0' },
-    { name: 'BOQA_AUTO_ANALYZE', description: 'Enable periodic analysis', required: false, default: 'true' },
+    { name: 'BOQA_AUTO_ANALYZE', description: 'Enable periodic analysis (exact opt-in only)', required: false, default: 'false' },
+    { name: 'BOQA_ADMIN_EXECUTION_ENABLED', description: 'Enable administrative execution (exact opt-in only)', required: false, default: 'false' },
+    { name: 'BOQA_OTEL_ENABLED', description: 'Enable passive telemetry (no exporter configured)', required: false, default: 'false' },
     { name: 'BOQA_RATE_LIMIT', description: 'Requests per minute per IP', required: false, default: '60' },
     { name: 'NODE_ENV', description: 'Node environment', required: false, default: 'production' },
   ],
   optional_env_vars: [
     { name: 'BOQA_BASELINE', description: 'Baseline ID for compare mode' },
-    { name: 'BOQA_CDP', description: 'CDP endpoint URL' },
+    { name: 'BOQA_CDP', description: 'Security-disabled legacy option; CDP activation is rejected' },
     { name: 'BOQA_HAR', description: 'Record HAR file', default: 'false' },
   ],
 };
@@ -263,4 +266,3 @@ console.log(`  Debt items:    ${report.non_blocking_debt.length}`);
 console.log('═══════════════════════════════════════════════════════════════\n');
 
 module.exports = { generateReport };
-

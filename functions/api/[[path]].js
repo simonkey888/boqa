@@ -1,69 +1,59 @@
 /**
- * Cloudflare Pages Function — catch-all proxy for /api/*
+ * Legacy Cloudflare Pages Function — deliberately quarantined.
  *
- * Forwards every /api/* request to the BOQA Node.js backend configured
- * via the BOQA_BACKEND_URL environment variable in Cloudflare dashboard.
- *
- * Until BOQA_BACKEND_URL is set, returns 502 with a clear message.
+ * BOQA is served by the Worker in worker.js. This historical Pages catch-all
+ * remains in the repository so an accidental Pages deployment fails closed:
+ * it never contacts the backend, signs a request, or forwards caller headers.
  */
 
-export async function onRequest(context) {
-  const { request, env } = context;
-  const backendUrl = (env && env.BOQA_BACKEND_URL) || '';
-  const url = new URL(request.url);
+const PUBLIC_READ_ONLY_PATHS = new Set([
+  '/api/health',
+  '/api/replay/health',
+  '/api/runtime/metrics',
+  '/api/bugs',
+  '/api/findings/summary',
+  '/api/reportability',
+  '/api/bounty-estimates',
+  '/api/portfolio',
+  '/api/targets',
+  '/api/coverage',
+]);
 
-  if (!backendUrl) {
-    return new Response(
-      JSON.stringify({
-        error: 'backend_not_configured',
-        message:
-          'BOQA backend URL not set. Configure BOQA_BACKEND_URL in Cloudflare Pages → Settings → Environment variables to point to your Node.js host (e.g. your Northflank service URL).',
-      }),
-      {
-        status: 502,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-  }
-
-  const targetUrl = backendUrl.replace(/\/$/, '') + url.pathname + url.search;
-
-  // Build a proxied request, forwarding all headers (including X-API-Key).
-  const proxyHeaders = new Headers(request.headers);
-  proxyHeaders.set('Host', new URL(backendUrl).host);
-
-  const proxyReq = new Request(targetUrl, {
-    method: request.method,
-    headers: proxyHeaders,
-    body: request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined,
-    redirect: 'manual',
+function json(status, error, message) {
+  return new Response(JSON.stringify({ error, message }), {
+    status,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
-
-  try {
-    const backendRes = await fetch(proxyReq);
-    // Forward the response, preserving status and headers.
-    const respHeaders = new Headers(backendRes.headers);
-    respHeaders.delete('Transfer-Encoding'); // CF will set its own
-    return new Response(backendRes.body, {
-      status: backendRes.status,
-      statusText: backendRes.statusText,
-      headers: respHeaders,
-    });
-  } catch (err) {
-    return new Response(
-      JSON.stringify({
-        error: 'backend_unreachable',
-        message: `Could not reach BOQA backend at ${backendUrl}. ${err.message || ''}`,
-      }),
-      {
-        status: 504,
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-  }
 }
 
-// Alias the common HTTP methods.
+export async function onRequest(context) {
+  const request = context.request;
+  const url = new URL(request.url);
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: { Allow: 'GET, HEAD, OPTIONS' } });
+  }
+
+  if (url.pathname === '/ws') {
+    return json(426, 'websocket_blocked_public', 'WebSocket is disabled on the legacy Pages surface.');
+  }
+
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return json(405, 'method_not_allowed', 'Only GET/HEAD requests are permitted.');
+  }
+
+  if (!PUBLIC_READ_ONLY_PATHS.has(url.pathname)) {
+    return json(404, 'route_not_found', 'Route is not available on the legacy Pages surface.');
+  }
+
+  return json(
+    503,
+    'legacy_proxy_disabled',
+    'The legacy Pages proxy is disabled; use the canonical BOQA Worker.',
+  );
+}
+
+// Method aliases retain Pages routing compatibility while preserving policy.
 export const onRequestGet = onRequest;
 export const onRequestPost = onRequest;
 export const onRequestPut = onRequest;

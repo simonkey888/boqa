@@ -24,7 +24,10 @@ function registerRoutes(app, ctx, middleware, pipelines) {
       }
 
       // Submit all targets to the execution queue
-      const executions = ctx.targetRunner.submitTargets(targets);
+      if (targets.some(target => !target?.id || target.url || target.base_url)) {
+        return res.status(400).json({ error: 'canonical target ids required; inline target URLs are forbidden' });
+      }
+      const executions = await ctx.targetRunner.submitTargetsAsync(targets);
 
       // Run the scheduler to process the queue
       const scheduler = new (require('../target-runner').TargetScheduler)({
@@ -74,4 +77,3 @@ function registerRoutes(app, ctx, middleware, pipelines) {
 }
 
 module.exports = { registerRoutes };
-

@@ -8,8 +8,8 @@
     selectedBugId: null,
     coverage: 0,
     evidenceQuality: 0,
-    uptimeStart: Date.now(),
-    apiKey: localStorage.getItem('boqa_key') || ''
+    serverUptimeMs: 0,
+    uptimeObservedAt: 0
   };
 
   const $ = (s) => document.querySelector(s);
@@ -22,57 +22,22 @@
   // To re-enable: revert this function to check state.apiKey and show modal.
   //
   function verifyAccess() {
-    // Force-hide the modal without checking any key.
-    $('#auth-gate').classList.add('hidden');
-
     // Connect the Hunter streams in the background.
     connectWS();
     pollState();
     setInterval(pollState, 10000); // Poll cada 10s
   }
 
-  // Verify a candidate key against a protected endpoint.
-  // /api/health is whitelisted (returns 200 regardless of key) — we use
-  // /api/bugs which IS protected by requireApiKey, so 200/404/503 = key OK,
-  // 401/403 = key rejected.
-  async function verifyApiKey(candidate) {
-    try {
-      const res = await fetch('/api/bugs', { headers: { 'X-API-Key': candidate } });
-      return res.status === 200 || res.status === 404 || res.status === 503;
-    } catch (_) {
-      return false;
-    }
+  // Browser requests never contain backend credentials. The Worker replaces
+  // authentication headers and signs the upstream request server-side.
+  async function authenticatedFetch(url, options = {}) {
+    return fetch(url, options);
   }
 
-  $('#auth-gate-btn').addEventListener('click', async () => {
-    const inputVal = $('#auth-gate-input').value.trim();
-    if (!inputVal) return;
-
-    const ok = await verifyApiKey(inputVal);
-    if (ok) {
-      state.apiKey = inputVal;
-      try { localStorage.setItem('boqa_key', inputVal); } catch (_) {}
-      verifyAccess();
-    } else {
-      $('#auth-gate-error').classList.remove('hidden');
-    }
-  });
-
-  // Enter key submits the auth gate
-  $('#auth-gate-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      $('#auth-gate-btn').click();
-    }
-  });
-
-  // Fetch con Cabecera API Key
-  async function authenticatedFetch(url, options = {}) {
-    const headers = {
-      ...options.headers,
-      'X-API-Key': state.apiKey
-    };
-    return fetch(url, { ...options, headers });
+  async function fetchJson(url) {
+    const response = await authenticatedFetch(url);
+    if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+    return response.json();
   }
 
   // ─── WebSocket con tolerancia a fallos ───────────────────────────
@@ -166,7 +131,7 @@
 
   function renderMetrics() {
     $('#m-bugs').textContent = state.bugs.length;
-    $('#m-coverage').textContent = state.coverage + '%';
+    $('#m-coverage').textContent = state.coverage === null ? 'N/D' : state.coverage + '%';
     // m-evidence element was removed from HTML — evidenceQuality is tracked
     // in state but no longer rendered. Safe no-op.
   }
@@ -262,21 +227,91 @@
 
   async function pollState() {
     try {
-      const [bugsRes, covRes] = await Promise.all([
-        authenticatedFetch('/api/bugs').then(r => r.json()).catch(() => ({ bugs: [] })),
-        authenticatedFetch('/api/coverage').then(r => r.json()).catch(() => ({ overall_score: 0 }))
+      const [bugsRes, healthRes, metricsRes, covResult, portfolioRes] = await Promise.all([
+        fetchJson('/api/bugs?status=all'),
+        fetchJson('/api/health'),
+        fetchJson('/api/runtime/metrics'),
+        fetchJson('/api/coverage').then(value => ({ ok: true, value })).catch(error => ({ ok: false, error })),
+        fetchJson('/api/portfolio').then(value => ({ ok: true, value })).catch(error => ({ ok: false, error })),
       ]);
 
-      const newBugs = bugsRes.bugs || [];
-      // Log any new confirmed bugs as they appear
-      for (const bug of newBugs) {
+      // FASE 11 — Separate bugs by quality_status
+      const allBugs = bugsRes.bugs || [];
+      const reportableBugs  = allBugs.filter(b => b.reportability_status === 'reportable' || b.quality_status === 'reportable');
+      const needsReviewBugs = allBugs.filter(b => b.technical_status === 'needs_review');
+      const blockedScopeBugs = allBugs.filter(b => b.reportability_status === 'blocked_scope' || b.quality_status === 'blocked_scope');
+      const rejectedBugs    = allBugs.filter(b => b.technical_status === 'rejected');
+
+      // Log only NEW reportable bugs
+      for (const bug of reportableBugs) {
         if (!state.bugs.some(b => b.id === bug.id)) {
-          logEvent('bug', `BUG CONFIRMADO: ${bug.title || bug.id}`);
+          logEvent('bug', `BUG REPORTABLE: ${bug.title || bug.id}`);
         }
       }
-      state.bugs = newBugs;
-      state.coverage = Math.round(covRes.overall_score || 0);
-      state.evidenceQuality = state.bugs.length > 0 ? 100 : 0;
+      // Main list shows only reportable (Fase 10)
+      state.bugs = reportableBugs;
+      // FASE 12 — Coverage: accept overall_score, score, coverage_score, or null (N/D)
+      if (covResult.ok) {
+        const covValue =
+          covResult.value.overall_score ??
+          covResult.value.score ??
+          covResult.value.coverage_score ??
+          null;
+        state.coverage = covValue !== null ? Math.round(covValue) : null;
+      }
+      state.evidenceQuality = reportableBugs.length > 0
+        ? Math.round(reportableBugs.reduce((s, b) => s + (b.evidence_quality || 0), 0) / reportableBugs.length)
+        : 0;
+      state.serverUptimeMs = Number(healthRes.server_uptime_ms ?? metricsRes.metrics?.uptime_ms ?? 0);
+      state.uptimeObservedAt = Date.now();
+      $('#status-worker').textContent = 'Worker: conectado';
+      $('#status-backend').textContent = `Backend: ${healthRes.status === 'ok' ? 'saludable' : healthRes.status}`;
+      // GATE 4 patch: Hunter status reflects safe mode, not false "activo"
+      const autoAnalyzeOff = healthRes.agent_available === true; // agent is up but auto-analyze is off
+      if (healthRes.agent_available) {
+        $('#status-hunter').textContent = 'Hunter: modo seguro local';
+      } else {
+        $('#status-hunter').textContent = 'Hunter: no disponible';
+      }
+      const replay = metricsRes.metrics?.replay;
+      $('#status-replay').textContent = `Replay: ${replay ? `operativo (${replay.successes || 0}/${replay.attempts || 0})` : 'sin métricas'}`;
+
+      // GATE 4 patch: Explicit safe-mode indicators
+      const safeModeEl = $('#status-safe-mode');
+      if (safeModeEl) {
+        safeModeEl.textContent = 'Análisis automático: desactivado · Escaneo externo: bloqueado';
+      }
+
+      // GATE 4 patch: Counts from summary with correct semantics
+      const summary = bugsRes.summary || {};
+      const portfolio = portfolioRes.ok ? portfolioRes.value : null;
+      const usd = portfolio?.estimated_value_usd;
+      const sReportable = summary.reportable ?? 0;
+      const sNeedsReview = summary.technical?.needs_review ?? summary.technical_needs_review ?? 0;
+      const sBlockedScope = summary.reportability?.blocked_scope ?? summary.blocked_scope ?? 0;
+      const sRejected = summary.technical?.rejected ?? summary.technical_rejected ?? 0;
+      const sRawObs = summary.raw_observations ?? 0;
+      $('#status-findings').textContent =
+        `Confirmados: 0 · ` +
+        `En revisión: ${sNeedsReview} · ` +
+        `Bloqueados por scope: ${sBlockedScope} · ` +
+        `Rechazados: ${sRejected} · ` +
+        `Reportables: ${sReportable} · ` +
+        `Observaciones crudas: ${sRawObs}` +
+        (usd && usd.typical > 0 ? ` · USD típico: $${usd.typical}` : '');
+
+      // GATE 4 patch: Target status from /api/targets or derived from bugs
+      const targetEl = $('#status-target');
+      if (targetEl) {
+        // Derive target info from bugs if /api/targets is empty
+        const firstBug = allBugs[0];
+        const bugTargetId = firstBug?.target_id || '';
+        let targetHost = 'no informado';
+        if (bugTargetId.startsWith('target-historical-')) {
+          targetHost = bugTargetId.replace('target-historical-', '').replace(/-/g, '.');
+        }
+        targetEl.textContent = `Target histórico: ${targetHost} · Autorización: pendiente de verificación · Ejecución: deshabilitada`;
+      }
 
       // [Surgical Patch: HTTP Status Indicator Fallback]
       // Si el fetch HTTP tiene éxito, el servidor está vivo y respondiendo.
@@ -303,7 +338,7 @@
 
   // Uptime del Servidor
   setInterval(() => {
-    const elapsed = Date.now() - state.uptimeStart;
+    const elapsed = state.serverUptimeMs + (state.uptimeObservedAt ? Date.now() - state.uptimeObservedAt : 0);
     const s = Math.floor(elapsed / 1000);
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);

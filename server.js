@@ -53,6 +53,12 @@ ctx.bus.wsServer = wss;
 ctx.wss = wss;
 ctx.server = server;
 
+// ─── P0 SECURITY: Admin execution gate ──────────────────────────────────
+// Block ALL POST/PUT/PATCH/DELETE on /api/* when BOQA_ADMIN_EXECUTION_ENABLED != 'true'
+const { createAdminGate } = require('./lib/admin-gate');
+const adminGate = createAdminGate({ telemetry: ctx.auditTelemetry });
+app.use('/api', adminGate);
+
 // ─── URGENT-5: Global API Auth Middleware ──────────────────────────────
 // Apply verifyHmac + rateLimiter + requireApiKey to ALL /api routes.
 // Whitelist: /health, /replay/health, /runtime/metrics (diagnostic endpoints)
@@ -83,6 +89,7 @@ app.use('/api', (req, res, next) => {
 
 const middleware = { requireAgent, requireApiKey, rateLimiter };
 
+require('./routes/quality-v1').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v01').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v08').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v09').registerRoutes(app, ctx, middleware, pipelines);
@@ -169,7 +176,7 @@ async function main() {
   console.log('  ║   Autonomous Decision Kernel                                  ║');
   console.log('  ╠═══════════════════════════════════════════════════════════════╣');
   console.log(`  ║  Mode:      ${modeLabel.padEnd(49)}║`);
-  console.log(`  ║  Target:    ${CONFIG.target.padEnd(49)}║`);
+  console.log(`  ║  Target:    ${(CONFIG.target || 'not configured').padEnd(49)}║`);
   console.log(`  ║  Session:   ${ctx.bus.sessionId.substring(0, 8).padEnd(49)}║`);
   console.log(`  ║  Dashboard: http://localhost:${String(CONFIG.port).padEnd(38)}║`);
   console.log(`  ║  Analyze:   every ${String(CONFIG.analyzeInterval + 's').padEnd(41)}║`);
@@ -185,7 +192,7 @@ async function main() {
   });
 
   // Start Agent (skip if init failed — degraded mode)
-  if (ctx.agent) {
+  if (ctx.agent && process.env.BOQA_ADMIN_EXECUTION_ENABLED === 'true') {
     try {
       await ctx.agent.start();
       console.log(`[Server] Agent active — mode: ${CONFIG.mode}`);
@@ -194,9 +201,12 @@ async function main() {
       console.error('[Server] Agent failed:', e.message);
       console.error('[Server] Server remains up — v0.9 APIs and dashboard available');
     }
-  } else {
+  } else if (!ctx.agent) {
     console.warn(`[Server] Agent not initialized — running in degraded mode. Error: ${ctx.agentInitError || 'unknown'}`);
     console.warn('[Server] Agent-dependent endpoints will return 503; other APIs remain functional.');
+  } else {
+    ctx.agentStartError = 'ADMIN_EXECUTION_DISABLED';
+    console.warn('[Server] Agent execution disabled by BOQA_ADMIN_EXECUTION_ENABLED fail-closed default');
   }
 
   // P5: Start runtime monitor for production observability
@@ -209,4 +219,3 @@ async function main() {
 }
 
 main();
-

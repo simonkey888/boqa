@@ -18,6 +18,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const executionGuard = require('./lib/execution-authorization-guard');
 
 // ─── Execution States ────────────────────────────────────────────────
 
@@ -70,6 +71,9 @@ class TargetRunner {
     this.evidenceGenerator = opts.evidenceGenerator || null;
     this.knowledgeIntegrator = opts.knowledgeIntegrator || null;
     this.operationalMetrics = opts.operationalMetrics || null;
+    this.registry = opts.registry || null;
+    this.resolver = opts.resolver;
+    this.executionGuard = opts.executionGuard || executionGuard;
 
     this.config = { ...DEFAULTS, ...opts };
     this.config.retryPolicy = { ...DEFAULTS.retryPolicy, ...(opts.retryPolicy || {}) };
@@ -99,11 +103,21 @@ class TargetRunner {
    * @returns {object} execution descriptor
    */
   submitTarget(target) {
-    const id = target.id || crypto.randomUUID();
-    const execution = {
+    throw new Error('ASYNC_EXECUTION_GUARD_REQUIRED: use submitTargetAsync()');
+  }
+
+  async submitTargetAsync(target) {
+    if (!target?.id || !this.registry) throw new Error('canonical target id required');
+    const canonical = this.registry.get(target.id);
+    if (!canonical) throw new Error(`Target not found: ${target.id}`);
+    const id = target.id;
+    const candidate = {
       id,
-      target_url: target.url,
-      target_name: target.name || target.url,
+      action: 'navigation',
+      target_id: canonical.id,
+      params: { url: canonical.url || canonical.base_url },
+      target_url: canonical.url || canonical.base_url,
+      target_name: canonical.name || canonical.id,
       priority: target.priority || 5,
       meta: target.meta || {},
       state: EXEC_STATES.QUEUED,
@@ -119,6 +133,10 @@ class TargetRunner {
       evidence_packages: [],
       execution_time_ms: 0,
     };
+
+    const authorization = await this.executionGuard.validateTaskAsync(candidate, this.registry, { resolver: this.resolver });
+    if (!authorization.allowed) throw new Error(`${authorization.code}: ${authorization.reason}`);
+    const execution = this.executionGuard.sealTask(candidate);
 
     if (this.executionQueue) {
       this.executionQueue.enqueue(execution);
@@ -136,7 +154,11 @@ class TargetRunner {
    * @returns {Array} execution descriptors
    */
   submitTargets(targets) {
-    return targets.map(t => this.submitTarget(t));
+    throw new Error('ASYNC_EXECUTION_GUARD_REQUIRED: use submitTargetsAsync()');
+  }
+
+  async submitTargetsAsync(targets) {
+    return Promise.all(targets.map(target => this.submitTargetAsync(target)));
   }
 
   /**
@@ -149,6 +171,10 @@ class TargetRunner {
    * @returns {object} updated execution
    */
   async executeTarget(execution, agent, ctx) {
+    const integrity = this.executionGuard.verifyTaskIntegrity(execution);
+    if (!integrity.allowed) throw new Error(`${integrity.code}: ${integrity.reason}`);
+    const authorization = await this.executionGuard.validateTaskAsync(execution, this.registry, { resolver: this.resolver });
+    if (!authorization.allowed) throw new Error(`${authorization.code}: ${authorization.reason}`);
     // URGENT-4: Degraded mode guard — protect flow when browser is unavailable
     if (!agent || ('page' in agent && !agent.page)) {
       console.warn(`[S6 Pipeline] Executing target URL ${execution.target_url} in DEGRADED MODE`);
@@ -353,7 +379,7 @@ class TargetRunner {
   /**
    * Resume from a saved checkpoint.
    */
-  resumeFromCheckpoint(outputDir) {
+  async resumeFromCheckpoint(outputDir) {
     const dir = outputDir || this.config.logDir || '/tmp';
     try {
       const cpPath = path.join(dir, 'target-runner-checkpoint.json');
@@ -365,7 +391,7 @@ class TargetRunner {
         e => e.state === EXEC_STATES.QUEUED || e.state === EXEC_STATES.RETRYING
       );
       for (const e of incomplete) {
-        this.submitTarget({ id: e.id, url: e.target_url, priority: 5 });
+        await this.submitTargetAsync({ id: e.id, priority: 5 });
       }
       return incomplete.length;
     } catch (_) {
@@ -632,4 +658,3 @@ class TargetScheduler {
 }
 
 module.exports = { TargetRunner, ExecutionQueue, TargetScheduler, EXEC_STATES };
-

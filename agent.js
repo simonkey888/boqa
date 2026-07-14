@@ -14,6 +14,8 @@ const { HypothesisEngine } = require('./finder');
 const { chromium } = require('playwright');
 const path = require('path');
 const fs = require('fs');
+const executionGuard = require('./lib/execution-authorization-guard');
+const { BrowserEgressGuard } = require('./lib/browser-egress-guard');
 
 // ─── Auth Pattern Definitions ──────────────────────────────────────────
 
@@ -422,7 +424,8 @@ class Agent {
     this.intel = new AuthIntelligence();
     this.anomaly = new AnomalyEngine(options.baseline || null);
     this.options = {
-      target: options.target || 'https://example.com',
+      target: options.target || null,
+      targetId: options.targetId || null,
       headless: options.headless || false,
       devtools: options.devtools !== false,
       cdpEndpoint: options.cdpEndpoint || null,
@@ -434,6 +437,16 @@ class Agent {
       slowMo: options.slowMo || 0,
       baseline: options.baseline || null,
     };
+    this.registry = options.registry || null;
+    this.resolver = options.resolver;
+    this.executionGuard = options.executionGuard || executionGuard;
+    this.telemetry = options.telemetry || null;
+    this.browserEgressGuard = options.browserEgressGuard || new BrowserEgressGuard({
+      registry: this.registry,
+      targetId: this.options.targetId,
+      resolver: this.resolver,
+      telemetry: this.telemetry,
+    });
 
     this.browser = null;
     this.context = null;
@@ -494,6 +507,24 @@ class Agent {
 
   async start() {
     console.log(`[Agent] Target: ${this.options.target}`);
+
+    if (this.options.cdpEndpoint) {
+      throw new Error('CDP_ENDPOINT_DISABLED_BY_EGRESS_POLICY');
+    }
+
+    const startupTask = {
+      action: 'navigation',
+      target_id: this.options.targetId,
+      params: { url: this.options.target },
+    };
+    const startupAuthorization = await this.executionGuard.validateTaskAsync(startupTask, this.registry, {
+      resolver: this.resolver,
+      telemetry: this.telemetry,
+      phase: 'agent_startup',
+    });
+    if (!startupAuthorization.allowed) {
+      throw new Error(`${startupAuthorization.code}: ${startupAuthorization.reason}`);
+    }
 
     // Wrap entire start() in try/catch — if anything fails after _launchBrowser(),
     // call this.stop() immediately to release Chromium resources and avoid OOM leaks.
@@ -566,6 +597,15 @@ class Agent {
 
       // Navigate
       console.log(`[Agent] Navigating to ${this.options.target}`);
+      const navigationAuthorization = await this.executionGuard.validateUrlAsync(
+        this.options.targetId,
+        this.options.target,
+        this.registry,
+        { resolver: this.resolver, method: 'GET' },
+      );
+      if (!navigationAuthorization.allowed) {
+        throw new Error(`${navigationAuthorization.code}: ${navigationAuthorization.reason}`);
+      }
       await this.page.goto(this.options.target, { waitUntil: 'domcontentloaded', timeout: 60000 });
       console.log('[Agent] Page loaded — instrumentation active');
 
@@ -587,6 +627,7 @@ class Agent {
     const ctxOpts = {
       viewport: this.options.viewport,
       ignoreHTTPSErrors: true,
+      serviceWorkers: 'block',
     };
     if (this.options.recordHar) {
       ctxOpts.recordHar = { path: this.options.harPath };
@@ -616,15 +657,13 @@ class Agent {
     });
 
     this.context = await this.browser.newContext(ctxOpts);
+    await this.browserEgressGuard.install(this.context);
     this.page = await this.context.newPage();
     console.log('[Agent] Browser launched (Headless & RAM-Optimized)');
   }
 
   async _connectCDP() {
-    this.browser = await chromium.connectOverCDP(this.options.cdpEndpoint);
-    this.context = this.browser.contexts()[0] || await this.browser.newContext();
-    this.page = this.context.pages()[0] || await this.context.newPage();
-    console.log(`[Agent] CDP bridge: ${this.options.cdpEndpoint}`);
+    throw new Error('CDP_ENDPOINT_DISABLED_BY_EGRESS_POLICY');
   }
 
   // ─── Network Hooks ─────────────────────────────────────────────
@@ -907,4 +946,3 @@ class Agent {
 }
 
 module.exports = { Agent, AuthIntelligence, INSTRUMENTATION_SCRIPT, AUTH_URL_PATTERNS, AUTH_COOKIE_NAMES };
-
