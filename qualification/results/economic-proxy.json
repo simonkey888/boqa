@@ -1,0 +1,39 @@
+{
+  "scope": "first_party_synthetic_holdout_only",
+  "measurement_basis": {
+    "full_suite_test_files": 38,
+    "full_suite_wall_seconds": 28.6,
+    "scored_holdout_evaluations": 80,
+    "reproducibility_repeats": 40,
+    "machine_hours": 0.007944444444444445,
+    "human_review_hours": 0,
+    "human_reviewed_reports": 0
+  },
+  "outcomes": {
+    "scenarios_processed": 80,
+    "TP": 40,
+    "FP": 0,
+    "FN": 0,
+    "reports_ready_by_automated_rubric": 40,
+    "requests": 184,
+    "requests_per_TP": 4.6,
+    "machine_hours_per_TP": 0.00019861111111111112,
+    "machine_hours_per_automated_ready_report": 0.00019861111111111112,
+    "internally_duplicated_findings_rate": null,
+    "human_rewrite_required_rate": null
+  },
+  "monthly_machine_only_projection": {
+    "days_per_month": 30,
+    "basis_seconds_per_scored_scenario": 0.35750000000000004,
+    "two_hours_per_day": 604195,
+    "four_hours_per_day": 1208391,
+    "eight_hours_per_day": 2416783
+  },
+  "limitations": [
+    "In-process synthetic fixtures are not representative of Docker or real application latency.",
+    "Monthly figures are machine-only arithmetic and must not be used as commercial capacity.",
+    "No report received independent human review, so rewrite rate and human throughput are unknown.",
+    "External labs were not run because Docker was unavailable.",
+    "No monetary value is estimated."
+  ]
+}

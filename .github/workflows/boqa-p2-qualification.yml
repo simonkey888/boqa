@@ -1,0 +1,60 @@
+name: BOQA P2 isolated qualification
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-p2-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BOQA_OTEL_ENABLED: "false"
+      BOQA_AUTO_ANALYZE: "false"
+      BOQA_ADMIN_EXECUTION_ENABLED: "false"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+    steps:
+      - name: Checkout clean commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci --no-audit --fund=false
+      - name: Run P1 regression and complete suite
+        run: npm test
+      - name: Run isolated first-party qualification
+        run: npm run test:p2
+      - name: Validate workflow and repository policy
+        run: |
+          node scripts/validate-workflow-policy.js
+          git diff --check
+          git diff --exit-code -- package-lock.json
+      - name: Scan changed files for secrets
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/scan-changed-secrets.js "$BASE_SHA" HEAD
+      - name: Stage allowlisted aggregate evidence only
+        run: |
+          mkdir -p p2-ci-artifacts
+          for name in aggregate-summary confusion-matrix report-quality-summary scope-compliance economic-proxy; do
+            if [ -f "qualification/results/${name}.json" ]; then cp "qualification/results/${name}.json" p2-ci-artifacts/; fi
+          done
+      - name: Upload aggregate evidence when present
+        uses: actions/upload-artifact@v4
+        with:
+          name: boqa-p2-aggregate-${{ github.sha }}
+          path: p2-ci-artifacts/*.json
+          if-no-files-found: ignore
+          retention-days: 14

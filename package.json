@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "test": "node scripts/run-all-tests.js",
+    "test:p2": "node scripts/run-p2-tests.js",
     "start": "node server.js",
     "live": "node server.js --mode=live",
     "baseline": "node server.js --mode=baseline",

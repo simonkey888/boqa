@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "boqa://qualification/scenario-manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scenario_id", "family", "variant", "seed", "ground_truth", "limits"],
+  "properties": {
+    "scenario_id": { "type": "string", "pattern": "^P2-[A-Z0-9-]+$" },
+    "family": { "type": "string", "minLength": 1 },
+    "variant": { "enum": ["vulnerable", "patched"] },
+    "seed": { "type": "integer", "minimum": 0 },
+    "ground_truth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vulnerable", "expected_cwe", "expected_boundary", "expected_evidence"],
+      "properties": {
+        "vulnerable": { "type": "boolean" },
+        "expected_cwe": { "type": "array", "items": { "type": "string" } },
+        "expected_boundary": { "type": "array", "items": { "type": "string" } },
+        "expected_evidence": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeout_ms", "max_requests", "max_navigation", "allowed_methods", "allowed_paths"],
+      "properties": {
+        "timeout_ms": { "type": "integer", "minimum": 1 },
+        "max_requests": { "type": "integer", "minimum": 1 },
+        "max_navigation": { "type": "integer", "minimum": 0 },
+        "allowed_methods": { "type": "array", "items": { "enum": ["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"] } },
+        "allowed_paths": { "type": "array", "items": { "type": "string", "pattern": "^/" } }
+      }
+    }
+  }
+}
