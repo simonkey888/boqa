@@ -2,31 +2,44 @@ name: BOQA Real Docker Soak V1
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - feat/boqa-local-lab-runtime-v1
+    paths:
+      - .github/soak-bootstrap-v1
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
-  group: boqa-full-soak-${{ github.ref }}
+  group: boqa-full-soak-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 jobs:
   soak:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        github.head_ref == 'feat/boqa-real-docker-soak-v1'
+      )
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       CI: 'true'
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-      BOQA_HEAD_SHA: ${{ github.sha }}
+      BOQA_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       BOQA_MERGE_SHA: ${{ github.sha }}
-      BOQA_TREE_SHA: ${{ github.sha }}
+      BOQA_GATE_DIR: ${{ github.workspace }}/output/soak/workflow-full
       SOAK_MODE: full
-      SOAK_INTERVAL_MS: '15000'
+      SOAK_INTERVAL_MS: '1000'
 
     steps:
       - name: Checkout exact commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Setup Node.js 20
@@ -35,17 +48,94 @@ jobs:
           node-version: '20'
           cache: npm
 
+      - name: Initialize soak evidence
+        run: node scripts/gate-status.js workflow STARTED
+
       - name: Reproducible install
-        run: npm ci
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js npm_ci FAIL' ERR
+          npm ci
+          node scripts/gate-status.js npm_ci PASS
+
+      - name: Syntax gate
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js syntax FAIL' ERR
+          node --check server.js lib/*.js routes/*.js scripts/*.js agent.js
+          node scripts/gate-status.js syntax PASS
+
+      - name: Focused qualification tests
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js focused_tests FAIL' ERR
+          node test/test-local-lab-runtime.js
+          node test/test-soak-qualification-helpers.js
+          node test/test-local-lab-docker.js
+          node scripts/gate-status.js focused_tests PASS
+
+      - name: Full regression suite
+        id: full_suite
+        continue-on-error: true
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/soak/workflow-full
+          trap 'node scripts/gate-status.js full_suite FAIL' ERR
+          npm run test 2>&1 | tee output/soak/workflow-full/full-suite.log
+          node scripts/gate-status.js full_suite PASS
+
+      - name: Diff integrity
+        id: diff_integrity
+        continue-on-error: true
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js diff_check FAIL' ERR
+          git diff --check
+          node scripts/gate-status.js diff_check PASS
+
+      - name: Compose policy gate
+        id: compose_policy
+        continue-on-error: true
+        env:
+          BOQA_REPO_ROOT: ${{ github.workspace }}
+          BOQA_EVIDENCE_DIR: ${{ github.workspace }}/output/soak/workflow-full/config-evidence
+          BOQA_ROUND_ID: full-config-validation
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$BOQA_EVIDENCE_DIR"
+          trap 'node scripts/gate-status.js compose_policy FAIL' ERR
+          docker compose -f compose.lab.yaml config --format json >output/soak/workflow-full/compose-config.json
+          node test/test-local-lab-docker.js
+          node scripts/gate-status.js compose_policy PASS
 
       - name: Run 12-round isolated Docker soak
-        run: node scripts/soak-test.js
+        id: docker_soak
+        continue-on-error: true
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/soak/workflow-full
+          trap 'node scripts/gate-status.js docker_soak FAIL' ERR
+          node scripts/soak-test.js 2>&1 | tee output/soak/workflow-full/docker-soak.log
+          node scripts/gate-status.js docker_soak PASS
+
+      - name: Enforce final soak gate
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          if [ "${{ steps.full_suite.outcome }}" != "success" ] || \
+             [ "${{ steps.diff_integrity.outcome }}" != "success" ] || \
+             [ "${{ steps.compose_policy.outcome }}" != "success" ] || \
+             [ "${{ steps.docker_soak.outcome }}" != "success" ]; then
+            node scripts/gate-status.js workflow FAIL
+            exit 1
+          fi
+          node scripts/gate-status.js workflow PASS
 
       - name: Upload soak evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: boqa-real-docker-soak-${{ github.sha }}
+          name: boqa-real-docker-soak-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             output/soak/
             docs/boqa-real-docker-soak-v1.json
