@@ -6,45 +6,48 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: boqa-full-soak-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   soak:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-
+    timeout-minutes: 45
     env:
-      CI: true
-      BOQA_AUTO_ANALYZE: false
-      BOQA_ADMIN_EXECUTION_ENABLED: false
-      BOQA_OTEL_ENABLED: false
-      BOQA_INSTANCE_COUNT: 1
-      BOQA_API_KEY: 'dummy-api-key'
-      BOQA_HMAC_SECRET: 'dummy-hmac-secret'
-      BOQA_BILLING_PIN: '123456'
-      npm_config_cache: ${{ github.workspace }}/.npm-cache
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+      CI: 'true'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      BOQA_HEAD_SHA: ${{ github.sha }}
+      BOQA_MERGE_SHA: ${{ github.sha }}
+      BOQA_TREE_SHA: ${{ github.sha }}
+      SOAK_MODE: full
+      SOAK_INTERVAL_MS: '15000'
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Checkout exact commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          node-version: 20
-          
-      - name: Reproducible Install
+          persist-credentials: false
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Reproducible install
         run: npm ci
-        
-      - name: Real Docker Soak (12 Rounds)
-        env:
-          SOAK_MODE: full
+
+      - name: Run 12-round isolated Docker soak
         run: node scripts/soak-test.js
-        
-      - name: Upload Evidence Artifact
+
+      - name: Upload soak evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: boqa-real-docker-soak-${{ github.sha }}
           path: |
             output/soak/
             docs/boqa-real-docker-soak-v1.json
+          if-no-files-found: error
+          retention-days: 30
