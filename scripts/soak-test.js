@@ -122,9 +122,17 @@ function verifyCompose() {
 }
 
 function waitDriver(containerId) {
-  const wait = command('docker', ['wait', containerId], { timeout: DRIVER_TIMEOUT_MS, allowFailure: true });
+  let wait;
+  try {
+    wait = command('docker', ['wait', containerId], { timeout: DRIVER_TIMEOUT_MS, allowFailure: true });
+  } catch (error) {
+    command('docker', ['kill', containerId], { allowFailure: true });
+    command('docker', ['rm', '-f', containerId], { allowFailure: true });
+    throw new Error(`DRIVER_TIMEOUT_OR_WAIT_FAILED:${error.message}`);
+  }
   if (wait.status !== 0) {
     command('docker', ['kill', containerId], { allowFailure: true });
+    command('docker', ['rm', '-f', containerId], { allowFailure: true });
     throw new Error(`DRIVER_WAIT_FAILED:${wait.stderr}`);
   }
   const exitCode = Number(wait.stdout.trim());
@@ -159,8 +167,11 @@ function runRound(index) {
     const evidencePath = path.join(RUN_DIR, `round-${roundId}.json`);
     if (fs.existsSync(evidencePath)) {
       const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+      evidence.driver_evidence_sha256 = evidence.evidence_sha256;
+      delete evidence.evidence_sha256;
       evidence.cleanup_verified = true;
       evidence.cleanup_inventory = cleanupState;
+      evidence.evidence_sha256 = sha256(JSON.stringify(evidence));
       fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
     }
   }
@@ -225,7 +236,7 @@ async function main() {
       schema_version: 1,
       candidate_head_sha: HEAD_SHA,
       candidate_merge_sha: MERGE_SHA,
-      source_tree_sha: process.env.BOQA_TREE_SHA || null,
+      source_tree_sha: command('git', ['rev-parse', 'HEAD^{tree}']).stdout.trim(),
       image_digest_match: true,
       config_digest_match: true,
       configured_runtime_user: oci.configured_user,
@@ -240,7 +251,9 @@ async function main() {
       completed_at: new Date().toISOString(),
     };
     fs.mkdirSync(path.join(ROOT, 'docs'), { recursive: true });
-    fs.writeFileSync(path.join(ROOT, 'docs', 'boqa-real-docker-soak-v1.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+    const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`;
+    fs.writeFileSync(path.join(ROOT, 'docs', 'boqa-real-docker-soak-v1.json'), manifestJson);
+    fs.writeFileSync(path.join(RUN_DIR, 'qualification-manifest.json'), manifestJson);
     gate.qualification_green = true;
     gate.completed_at = new Date().toISOString();
     gate.gates.final = 'PASS';
