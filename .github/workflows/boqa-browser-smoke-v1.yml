@@ -1,0 +1,58 @@
+name: BOQA Browser Smoke Gate V1
+
+on:
+  pull_request:
+    branches:
+      - main
+      - 'feat/**'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: boqa-browser-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      BOQA_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run browser smoke
+        run: |
+          set -Eeuo pipefail
+          node --check scripts/browser-smoke-v1.js
+          node scripts/browser-smoke-v1.js
+      - name: Verify evidence checksums
+        run: |
+          set -Eeuo pipefail
+          cd output/browser-smoke
+          sha256sum browser-smoke-evidence.json desktop-1440.png mobile-390.png mobile-360.png private-anonymous-mobile.png server.log > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Upload browser smoke evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-browser-smoke-${{ github.event.pull_request.head.sha }}
+          path: output/browser-smoke/
+          if-no-files-found: error
+          retention-days: 14
