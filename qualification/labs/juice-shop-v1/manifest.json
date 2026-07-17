@@ -8,7 +8,7 @@
   "upstream_version": "19.1.1",
   "upstream_revision": "c8c407d503ce9c8e6582b39b40db84db06989744",
   "license": "MIT",
-  "runtime_user_verification": "enforced_uid_1000",
+  "runtime_user_verification": "candidate_uid_65532_control_driver_uid_1000",
   "runtime_user_compensations": [
     "internal_network",
     "cap_drop_all",
