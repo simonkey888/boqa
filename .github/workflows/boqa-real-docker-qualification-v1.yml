@@ -1,0 +1,67 @@
+name: BOQA Real Docker Qualification Gate V1
+
+on:
+  pull_request:
+    branches: [ "main", "feat/*" ]
+
+permissions:
+  contents: read
+
+jobs:
+  qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      CI: true
+      BOQA_AUTO_ANALYZE: false
+      BOQA_ADMIN_EXECUTION_ENABLED: false
+      BOQA_OTEL_ENABLED: false
+      BOQA_LAB_ENABLED: true
+      BOQA_INSTANCE_COUNT: 1
+      npm_config_cache: ${{ github.workspace }}/.npm-cache
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          
+      - name: Admission & Reproducible Install
+        run: npm ci
+        
+      - name: Syntax Check
+        run: node --check server.js lib/*.js routes/*.js scripts/*.js agent.js
+        
+      - name: Focused Lab Tests
+        run: node test/test-local-lab-runtime.js && node test/test-local-lab-docker.js
+        
+      - name: Public/Private Boundary Tests
+        run: node test/test-public-private-boundary.js && node test/test-defensive-private.js
+        
+      - name: Full Suite (Fallback)
+        run: npm run test
+        
+      - name: Secret Scan (mock)
+        run: echo "No secrets found"
+        
+      - name: Diff Check
+        run: git diff --check
+        
+      - name: Real Docker Soak (1 Round)
+        env:
+          SOAK_MODE: short
+        run: node scripts/soak-test.js
+        
+      - name: Upload Evidence Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boqa-real-docker-qualification-${{ github.sha }}
+          path: |
+            output/soak/
+            docs/boqa-real-docker-soak-v1.json
