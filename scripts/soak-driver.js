@@ -4,7 +4,7 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { LocalLabRuntime } = require('../lib/local-lab-runtime');
-const { assertRoundEvidence } = require('../lib/soak-qualification-helpers');
+const { assertRoundEvidence, sha256 } = require('../lib/soak-qualification-helpers');
 
 const manifest = require('../qualification/labs/juice-shop-v1/manifest.json');
 const evidenceDir = process.env.BOQA_EVIDENCE_DIR || '/evidence';
@@ -32,11 +32,14 @@ async function main() {
   fs.mkdirSync(evidenceDir, { recursive: true });
   const runtime = new LocalLabRuntime({ imageDigest: manifest.image_manifest_digest });
   const evidence = await runtime.runOnce({ runId });
+  evidence.runtime_evidence_sha256 = evidence.evidence_sha256;
+  delete evidence.evidence_sha256;
   evidence.egress = {
     dns: await probeHttp('example.invalid'),
     metadata: await probeHttp('169.254.169.254'),
     documentation_ip: await probeHttp('192.0.2.1'),
   };
+  evidence.evidence_sha256 = sha256(JSON.stringify(evidence));
   assertRoundEvidence(evidence, manifest);
   const output = path.join(evidenceDir, `round-${runId}.json`);
   fs.writeFileSync(output, `${JSON.stringify(evidence, null, 2)}\n`, { flag: 'wx' });
