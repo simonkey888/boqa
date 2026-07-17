@@ -5,6 +5,7 @@ const {
   assertComposePolicy,
   assertEgressEvidence,
   assertRoundEvidence,
+  computeEvidenceSha256,
   safeProjectName,
   summarizeRounds,
 } = require('../lib/soak-qualification-helpers');
@@ -42,10 +43,14 @@ const evidence = {
   reportability: 'not_reportable',
   request_budget_verified: true,
   request_count: 4,
-  evidence_sha256: 'a'.repeat(64),
   egress,
 };
+evidence.evidence_sha256 = computeEvidenceSha256(evidence);
 assert.equal(assertRoundEvidence(evidence, manifest), true);
+assert.throws(
+  () => assertRoundEvidence({ ...evidence, request_count: 5 }, manifest),
+  /EVIDENCE_HASH_MISMATCH/,
+);
 assert.match(safeProjectName('BOQA PR#9 / ABC'), /^boqa-pr-9-abc$/);
 assert.deepEqual(summarizeRounds([{ ...evidence, cleanup_verified: true }]), {
   rounds_requested: 1,
