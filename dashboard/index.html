@@ -1,128 +1,18 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="es">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>🐛 BOQA Hunter</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐛</text></svg>">
-  <link rel="shortcut icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐛</text></svg>">
-  <link rel="stylesheet" href="style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Plataforma de validación defensiva continua sobre activos autorizados.">
+  <title>BOQA · Validación defensiva</title><link rel="stylesheet" href="/style.css">
 </head>
 <body>
-
-  <!-- LAYOUT PRINCIPAL -->
-  <div class="twenty-layout">
-
-    <!-- Barra Lateral -->
-    <aside class="sidebar">
-      <div class="sidebar-brand">
-        <span class="brand-dot active"></span>
-        <span class="brand-text">🐛 BOQA HUNTER</span>
-      </div>
-      <nav class="sidebar-menu">
-        <button class="menu-item active" data-tab="detections">IA en Vivo</button>
-        <button class="menu-item" data-tab="reports">Centro de Cobros</button>
-      </nav>
-      <div class="sidebar-status">
-        <span class="status-indicator" id="srv-status"></span>
-        <span class="status-text" id="srv-status-text">Conectando...</span>
-      </div>
-    </aside>
-
-    <!-- Área de Contenido -->
-    <main class="main-content">
-
-      <!-- PANEL 1: IA EN VIVO -->
-      <section class="tab-panel active" id="panel-detections">
-        <header class="panel-header">
-          <h2>Monitoreo en Tiempo Real</h2>
-          <p class="panel-desc">Flujo de navegación y análisis de heurísticas del Hunter.</p>
-        </header>
-
-        <!-- Tarjetas de Métricas Directas -->
-        <div class="metrics-grid">
-          <div class="metric-card">
-            <span class="metric-title">Bugs Confirmados</span>
-            <span class="metric-value text-red" id="m-bugs">0</span>
-          </div>
-          <div class="metric-card">
-            <span class="metric-title">Cobertura de API</span>
-            <span class="metric-value text-cyan" id="m-coverage">0%</span>
-          </div>
-          <div class="metric-card">
-            <span class="metric-title">Uptime del Servidor</span>
-            <span class="metric-value text-green" id="m-uptime">00:00:00</span>
-          </div>
-        </div>
-        <div class="card" id="system-status" aria-live="polite">
-          <div class="card-header">Estado operativo</div>
-          <div class="detail-value" id="status-worker">Worker: verificando</div>
-          <div class="detail-value" id="status-backend">Backend: verificando</div>
-          <div class="detail-value" id="status-hunter">Hunter: verificando</div>
-          <div class="detail-value" id="status-replay">Replay: verificando</div>
-          <div class="detail-value" id="status-target">Target: verificando</div>
-          <div class="detail-value" id="status-findings">Reportables: verificando</div>
-          <div class="detail-value" id="status-safe-mode">Análisis: verificando</div>
-        </div>
-
-        <!-- Cyber Pitch 3D + Consola compacta -->
-        <div class="detections-layout">
-          <div class="card cyber-pitch-card">
-            <div class="card-header">
-              <span>Cyber Pitch — Superficie de Ataque 3D</span>
-              <span class="cyber-pitch-hint" id="cyber-pitch-hint">Mueve el ratón para rotar</span>
-            </div>
-            <div class="cyber-pitch-wrapper">
-              <canvas id="cyber-pitch-canvas"></canvas>
-            </div>
-          </div>
-
-          <!-- Consola de Eventos del Hunter (compacta, lateral) -->
-          <div class="card stream-card">
-            <div class="card-header">Actividad del Agente</div>
-            <div class="event-stream" id="event-stream">
-              <div class="stream-empty">Esperando inicialización del Hunter...</div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- PANEL 2: REPORTES Y COBROS -->
-      <section class="tab-panel" id="panel-reports">
-        <header class="panel-header">
-          <h2>Centro de Cobros & Bounties</h2>
-          <p class="panel-desc">Acceda a la evidencia forense validada y exporte reportes profesionales.</p>
-        </header>
-
-        <div class="reports-layout">
-          <!-- Lista de Bugs Confirmados -->
-          <div class="card list-card">
-            <div class="card-header">Bugs Listos para Reportar</div>
-            <div class="report-list" id="report-list">
-              <div class="stream-empty">Buscando hallazgos confirmados...</div>
-            </div>
-          </div>
-
-          <!-- Detalles del reporte seleccionado -->
-          <div class="card detail-card">
-            <div class="card-header">Evidencia Forense</div>
-            <div class="report-detail-placeholder" id="report-detail-placeholder">
-              Seleccione un bug confirmado para preparar el informe de entrega.
-            </div>
-            <div class="report-detail-content hidden" id="report-detail-content">
-              <!-- JS inyectará el contenido estructurado aquí -->
-            </div>
-          </div>
-        </div>
-      </section>
-
-    </main>
-  </div>
-  <script src="/app.js"></script>
-</body>
-</html>
-<!-- v:1783656281 -->
-<!-- v:1783658977026394415 -->
+<header class="topbar"><a class="brand" href="/">BOQA</a><nav><a href="#actividad">Actividad</a><a href="#hallazgos">Hallazgos</a><a href="#evidencia">Evidencia</a></nav><div class="connection"><i id="connection-dot"></i><span id="connection">Conectando</span><small id="version">v—</small></div></header>
+<main>
+  <section class="hero"><div><span class="eyebrow" id="overall">Motor verificando</span><h1>Validación defensiva continua</h1><p>BOQA verifica superficies autorizadas, conserva evidencia y bloquea cualquier ejecución fuera de política.</p><strong id="operational-copy">Preparando laboratorio controlado</strong></div><div class="trace" id="trace" data-stage="pending" aria-label="Ciclo de validación"><div class="trace-line"></div><span data-key="authorization"><i></i>Autorizando</span><span data-key="preparation"><i></i>Preparando</span><span data-key="validation"><i></i>Validando</span><span data-key="evidence"><i></i>Evidencia</span><span data-key="classification"><i></i>Clasificando</span></div></section>
+  <section class="kpis" aria-label="Indicadores"><article><b id="k-engine">—</b><span>Estado del motor</span><small id="k-engine-note">Sin datos</small></article><article><b id="k-cycle">—</b><span>Ciclo actual</span><small id="k-cycle-note">Sin datos</small></article><article><b id="k-assets">—</b><span>Activos autorizados</span><small>Allowlist verificada</small></article><article><b id="k-checks">—</b><span>Controles completados</span><small>Último ciclo</small></article><article><b id="k-validated">—</b><span>Findings validados</span><small>Clasificación técnica</small></article><article><b id="k-reportable">—</b><span>Findings reportables</span><small>Listos para revisión</small></article></section>
+  <div class="split"><section class="panel" id="actividad"><div class="panel-head"><div><span class="eyebrow">Ejecución</span><h2>Actividad reciente</h2></div><span id="next-cycle">Sin datos</span></div><div id="activity-list" class="rows"><div class="empty">Esperando el primer ciclo real.</div></div></section>
+  <section class="panel" id="hallazgos"><div class="panel-head"><div><span class="eyebrow">Clasificación</span><h2>Hallazgos</h2></div></div><div class="finding-grid"><div><b id="f-confirmed">—</b><span>Confirmados</span></div><div><b id="f-review">—</b><span>En revisión</span></div><div><b id="f-blocked">—</b><span>Bloqueados por scope</span></div><div><b id="f-rejected">—</b><span>Rechazados</span></div><div><b id="f-reportable">—</b><span>Reportables</span></div></div><p class="muted">Las observaciones sin validar nunca se presentan como vulnerabilidades.</p></section></div>
+  <section class="panel" id="evidencia"><div class="panel-head"><div><span class="eyebrow">Integridad</span><h2>Evidencia</h2></div><span id="integrity">Sin datos</span></div><div class="evidence-head"><span>Identificador</span><span>Fecha</span><span>Origen</span><span>Estado</span><span>Hash</span></div><div id="evidence-list" class="rows"><div class="empty">Sin evidencia disponible.</div></div></section>
+</main>
+<footer><span id="footer-version">BOQA v—</span><span id="footer-sha">SHA —</span><span id="footer-backend">Backend verificando</span><span id="footer-scheduler">Scheduler verificando</span></footer>
+<script src="/app.js" defer></script></body></html>

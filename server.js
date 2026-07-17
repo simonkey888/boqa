@@ -12,6 +12,8 @@ const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const path = require('path');
+const { createBillingAuth } = require('./lib/billing-auth');
+const { DefensiveValidationService } = require('./lib/defensive-validation');
 
 // ─── Config ─────────────────────────────────────────────────────────────
 
@@ -25,6 +27,9 @@ const { createRequireAgent, errorHandler, requireApiKey, rateLimiter, verifyHmac
 
 const { initialize } = require('./lib/init');
 const ctx = initialize(CONFIG, OUTPUT_DIR);
+ctx.defensiveValidation = new DefensiveValidationService();
+ctx.defensiveValidation.start();
+const billingAuth = createBillingAuth();
 
 // Create agent-aware middleware now that ctx exists
 const requireAgent = createRequireAgent(() => ctx.agent, () => ctx.agentInitError);
@@ -38,7 +43,17 @@ const app = express();
 // stashes the raw buffer on req._rawBody for HMAC verification later.
 app.use(express.json(attachRawBodyCapture()));
 const server = http.createServer(app);
+app.get('/cobros', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.sendFile(path.join(__dirname, 'dashboard', 'cobros.html'));
+});
 app.use(express.static(path.join(__dirname, 'dashboard')));
+
+app.get('/api/defensive/status', (_req, res) => res.json(ctx.defensiveValidation.publicStatus()));
+app.post('/api/private/billing/auth', billingAuth.authenticate);
+app.get('/api/private/billing/session', billingAuth.requireSession, (req, res) => res.json({ authenticated: true, csrf_token: req.billingSession.csrf, expires_at: new Date(req.billingSession.expiresAt).toISOString() }));
+app.get('/api/private/billing/data', billingAuth.requireSession, (_req, res) => res.json({ movements: [], summary: null }));
+app.post('/api/private/billing/logout', billingAuth.requireSession, billingAuth.requireCsrf, billingAuth.logout);
 
 // ─── Pipelines ──────────────────────────────────────────────────────────
 
@@ -64,6 +79,7 @@ ctx.server = server;
 const AUTH_WHITELIST = new Set(['/health', '/replay/health', '/runtime/metrics']);
 
 app.use('/api', (req, res, next) => {
+  if (req.path === '/defensive/status' || req.path.startsWith('/private/billing/')) return next();
   // Skip auth for whitelisted diagnostic paths (they have their own protection)
   const apiPath = req.path; // path relative to /api mount point
   if (AUTH_WHITELIST.has(apiPath)) {
@@ -170,7 +186,7 @@ async function main() {
   console.log('  ║   Autonomous Decision Kernel                                  ║');
   console.log('  ╠═══════════════════════════════════════════════════════════════╣');
   console.log(`  ║  Mode:      ${modeLabel.padEnd(49)}║`);
-  console.log(`  ║  Target:    ${CONFIG.target.padEnd(49)}║`);
+  console.log(`  ║  Target:    ${(CONFIG.target || 'none (fail-closed)').padEnd(49)}║`);
   console.log(`  ║  Session:   ${ctx.bus.sessionId.substring(0, 8).padEnd(49)}║`);
   console.log(`  ║  Dashboard: http://localhost:${String(CONFIG.port).padEnd(38)}║`);
   console.log(`  ║  Analyze:   every ${String(CONFIG.analyzeInterval + 's').padEnd(41)}║`);
@@ -210,4 +226,3 @@ async function main() {
 }
 
 main();
-

@@ -12,3 +12,5 @@ services:
     environment:
       BOQA_API_KEY: ${BOQA_API_KEY:?BOQA_API_KEY must be set externally}
       BOQA_HMAC_SECRET: ${BOQA_HMAC_SECRET:?BOQA_HMAC_SECRET must be set externally}
+      BOQA_BILLING_PIN: ${BOQA_BILLING_PIN:?BOQA_BILLING_PIN must be set externally}
+      BOQA_AUTO_ANALYZE: "false"

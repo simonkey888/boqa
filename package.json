@@ -32,7 +32,8 @@
     "counterfactual": "curl http://localhost:7070/api/counterfactual",
     "stability": "curl http://localhost:7070/api/stability",
     "alignment": "curl http://localhost:7070/api/alignment",
-    "test:dashboard": "node test/test-dashboard-smoke.js"
+    "test:dashboard": "node test/test-dashboard-smoke.js",
+    "test:defensive": "node test/test-defensive-private.js && node test/test-public-private-boundary.js"
   },
   "keywords": [
     "observability",

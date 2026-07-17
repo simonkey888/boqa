@@ -231,6 +231,14 @@ function unauthorizedResponse() {
 function handleDemoApi(request, env) {
   const url = new URL(request.url);
 
+  // Fail closed when no backend is configured. Never present demo findings as
+  // operational results and never expose private data from the edge.
+  if (url.pathname === '/api/health') return new Response(JSON.stringify({ status: 'degraded', backend_configured: false }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  if (url.pathname === '/api/defensive/status') return new Response(JSON.stringify({ mode: 'DEFENSIVE_VALIDATION', engine_status: 'BLOCKED_BY_POLICY', scheduler_status: 'WAITING_FOR_AUTHORIZED_ASSET', authorized_assets: null, controls_completed: null, validated_findings: null, reportable_findings: null, activity: [], evidence: [] }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  if (url.pathname === '/api/bugs') return new Response(JSON.stringify({ bugs: [], summary: {} }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  return new Response(JSON.stringify({ error: 'backend_unavailable' }), { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+
+  /* istanbul ignore next -- legacy demo implementation is unreachable */
   if (!isAuthorized(request, env)) {
     return unauthorizedResponse();
   }
@@ -452,6 +460,12 @@ export default {
 
     // /api/* → demo mode OR proxy
     if (url.pathname.startsWith('/api/')) {
+      const publicReadPaths = new Set(['/api/health', '/api/runtime/metrics', '/api/defensive/status', '/api/bugs']);
+      const isPublicRead = request.method === 'GET' && publicReadPaths.has(url.pathname);
+      const isPrivateBilling = url.pathname.startsWith('/api/private/billing/');
+      if (!isPublicRead && !isPrivateBilling) {
+        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      }
       if (backendConfigured) {
         return proxyToBackend(request, env);
       }
@@ -498,7 +512,8 @@ export default {
       const isHtml = url.pathname === '/' || url.pathname.endsWith('.html');
       const isJs = url.pathname.endsWith('.js');
       const isCss = url.pathname.endsWith('.css');
-      if (isHtml || isJs || isCss) {
+      const isPrivateAsset = url.pathname === '/cobros' || url.pathname === '/cobros.js' || url.pathname === '/private.css';
+      if (isHtml || isJs || isCss || isPrivateAsset) {
         const headers = new Headers(assetRes.headers);
         headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
         headers.set('Pragma', 'no-cache');
