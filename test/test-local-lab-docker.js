@@ -35,7 +35,13 @@ const configured = spawnSync('docker', [
 
 try {
   assert.equal(configured.status, 0, configured.stderr || configured.stdout);
-  assertComposePolicy(JSON.parse(configured.stdout));
+  const model = JSON.parse(configured.stdout);
+  assertComposePolicy(model);
+  assert.deepEqual(
+    model.services.candidate.healthcheck?.test?.slice(0, 2),
+    ['CMD', '/nodejs/bin/node'],
+    'Juice Shop uses a distroless Node image; healthcheck must invoke its absolute runtime path',
+  );
   console.log('local lab docker config: PASS');
 } finally {
   fs.rmSync(evidenceDir, { recursive: true, force: true });
