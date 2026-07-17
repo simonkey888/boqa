@@ -97,6 +97,8 @@ const recovered = State.buildModel({
 });
 assert.equal(recovered.overall.view_state, 'FRESH');
 
+
+
 async function runNetworkContracts() {
   const ok = await State.fetchJsonContract(async () => ({
     ok: true,
