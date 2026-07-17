@@ -76,8 +76,8 @@ function assertNoResidue(stage) {
   return state;
 }
 
-function cleanup() {
-  compose(['down', '-v', '--remove-orphans', '--timeout', '10'], { allowFailure: true, timeout: 60000 });
+function cleanup(env = { BOQA_REPO_ROOT: ROOT, BOQA_EVIDENCE_DIR: RUN_DIR, BOQA_ROUND_ID: 'cleanup' }) {
+  compose(['down', '-v', '--remove-orphans', '--timeout', '10'], { allowFailure: true, timeout: 60000, env });
   return assertNoResidue('post_cleanup');
 }
 
@@ -163,7 +163,7 @@ function runRound(index) {
     assertRoundEvidence(evidence, MANIFEST);
     return { roundId, evidence, preState, evidencePath };
   } finally {
-    cleanupState = cleanup();
+    cleanupState = cleanup(env);
     const evidencePath = path.join(RUN_DIR, `round-${roundId}.json`);
     if (fs.existsSync(evidencePath)) {
       const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
