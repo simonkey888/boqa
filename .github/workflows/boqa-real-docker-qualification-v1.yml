@@ -17,7 +17,6 @@ jobs:
       BOQA_AUTO_ANALYZE: false
       BOQA_ADMIN_EXECUTION_ENABLED: false
       BOQA_OTEL_ENABLED: false
-      BOQA_LAB_ENABLED: true
       BOQA_INSTANCE_COUNT: 1
       npm_config_cache: ${{ github.workspace }}/.npm-cache
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
