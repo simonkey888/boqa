@@ -157,8 +157,8 @@ function inspectContainer(containerId) {
   };
 }
 
-function composeServiceIdentity(service) {
-  const containerId = compose(['ps', '-q', service]).stdout.trim();
+function composeServiceIdentity(service, env) {
+  const containerId = compose(['ps', '-q', service], { env }).stdout.trim();
   if (!containerId) throw new Error(`CONTAINER_MISSING:${service}`);
   return inspectContainer(containerId);
 }
@@ -235,8 +235,8 @@ function runRound(index) {
 
   try {
     compose(['up', '-d', '--wait', 'candidate', 'control'], { env, timeout: 240000 });
-    containerIdentities.candidate = composeServiceIdentity('candidate');
-    containerIdentities.control = composeServiceIdentity('control');
+    containerIdentities.candidate = composeServiceIdentity('candidate', env);
+    containerIdentities.control = composeServiceIdentity('control', env);
     const run = compose(['run', '-d', '--no-deps', 'driver'], { env, timeout: 60000 });
     const containerId = run.stdout.trim().split(/\s+/).pop();
     if (!/^[a-f0-9]{12,64}$/.test(containerId || '')) throw new Error(`DRIVER_ID_INVALID:${run.stdout}`);
