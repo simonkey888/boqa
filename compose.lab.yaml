@@ -1,7 +1,7 @@
 services:
   candidate:
     image: bkimminich/juice-shop@sha256:67b87bff95f5719f9a31ab2bcf48cacc30fcc30d4662c2047ca0c0b8b4b7ebae
-    user: "1000:1000"
+    user: "65532:65532"
     read_only: true
     cap_drop: ["ALL"]
     security_opt: ["no-new-privileges:true"]
@@ -10,9 +10,9 @@ services:
     cpus: 0.75
     restart: "no"
     tmpfs:
-      - /tmp:size=64m,uid=1000,gid=1000,mode=1770,noexec,nosuid,nodev
-      - /juice-shop/data:size=64m,uid=1000,gid=1000,mode=1770,nosuid,nodev
-      - /juice-shop/logs:size=16m,uid=1000,gid=1000,mode=1770,nosuid,nodev
+      - /tmp:size=64m,uid=65532,gid=65532,mode=1770,noexec,nosuid,nodev
+      - /juice-shop/data:size=64m,uid=65532,gid=65532,mode=1770,nosuid,nodev
+      - /juice-shop/logs:size=16m,uid=65532,gid=65532,mode=1770,nosuid,nodev
     networks:
       boqa_lab_internal:
         aliases: ["boqa-lab-juice-shop"]
