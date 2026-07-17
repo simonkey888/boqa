@@ -1,0 +1,8 @@
+schema_version=1
+purpose=temporary-pr-bootstrap-for-full-soak
+mode=full
+rounds=12
+expected_parent_sha=acfdbf9e99c1a89a72f43ec38dc358e166b9677f
+authorized_scope=isolated-juice-shop-lab-only
+production_accessed=false
+deploy_performed=false
