@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { assertComposePolicy } = require('../lib/soak-qualification-helpers');
+const manifest = require('../qualification/labs/juice-shop-v1/manifest.json');
 
 const root = path.resolve(__dirname, '..');
 const probe = spawnSync('docker', ['compose', 'version'], { encoding: 'utf8' });
@@ -37,6 +38,12 @@ try {
   assert.equal(configured.status, 0, configured.stderr || configured.stdout);
   const model = JSON.parse(configured.stdout);
   assertComposePolicy(model);
+  assert.equal(
+    model.services.candidate.image,
+    manifest.image_reference,
+    'candidate image reference must retain the exact pinned Juice Shop manifest digest',
+  );
+  assert.equal(model.services.candidate.user, '65532:65532');
   assert.deepEqual(
     model.services.candidate.healthcheck?.test?.slice(0, 2),
     ['CMD', '/nodejs/bin/node'],
