@@ -6,6 +6,7 @@ const {
   assertEgressEvidence,
   assertRoundEvidence,
   computeEvidenceSha256,
+  finalizeRoundEvidence,
   safeProjectName,
   summarizeRounds,
 } = require('../lib/soak-qualification-helpers');
@@ -51,8 +52,28 @@ assert.throws(
   () => assertRoundEvidence({ ...evidence, request_count: 5 }, manifest),
   /EVIDENCE_HASH_MISMATCH/,
 );
+
+const emptyInventory = { containers: [], networks: [], volumes: [] };
+const finalized = finalizeRoundEvidence(evidence, {
+  preState: emptyInventory,
+  cleanupState: emptyInventory,
+  cleanupVerified: true,
+});
+assert.equal(finalized.driver_evidence_sha256, evidence.evidence_sha256);
+assert.equal(finalized.cleanup_verified, true);
+assert.notEqual(finalized.evidence_sha256, evidence.evidence_sha256);
+assert.equal(assertRoundEvidence(finalized, manifest), true);
+const failedCleanup = finalizeRoundEvidence(evidence, {
+  preState: emptyInventory,
+  cleanupState: { containers: ['container-id'], networks: [], volumes: [] },
+  cleanupVerified: false,
+  cleanupError: 'RESIDUE_DETECTED',
+});
+assert.equal(failedCleanup.cleanup_verified, false);
+assert.equal(summarizeRounds([failedCleanup]).cleanup_failures, 1);
+
 assert.match(safeProjectName('BOQA PR#9 / ABC'), /^boqa-pr-9-abc$/);
-assert.deepEqual(summarizeRounds([{ ...evidence, cleanup_verified: true }]), {
+assert.deepEqual(summarizeRounds([finalized]), {
   rounds_requested: 1,
   rounds_completed: 1,
   vulnerable_confirmed: 1,
