@@ -18,6 +18,9 @@ jobs:
       BOQA_ADMIN_EXECUTION_ENABLED: false
       BOQA_OTEL_ENABLED: false
       BOQA_INSTANCE_COUNT: 1
+      BOQA_API_KEY: 'dummy-api-key'
+      BOQA_HMAC_SECRET: 'dummy-hmac-secret'
+      BOQA_BILLING_PIN: '123456'
       npm_config_cache: ${{ github.workspace }}/.npm-cache
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
 
