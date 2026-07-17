@@ -1,220 +1,276 @@
 'use strict';
+
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
-const { execSync } = require('child_process');
-const { LocalLabRuntime } = require('../lib/local-lab-runtime');
+const { spawnSync } = require('child_process');
+const {
+  assertComposePolicy,
+  assertRoundEvidence,
+  safeProjectName,
+  sha256,
+  summarizeRounds,
+} = require('../lib/soak-qualification-helpers');
 
-const LAB_IMAGE = 'bkimminich/juice-shop@sha256:67b87bff95f5719f9a31ab2bcf48cacc30fcc30d4662c2047ca0c0b8b4b7ebae';
+const ROOT = path.resolve(__dirname, '..');
+const COMPOSE_FILE = path.join(ROOT, 'compose.lab.yaml');
+const MANIFEST = require('../qualification/labs/juice-shop-v1/manifest.json');
 const EXPECTED_CONFIG_DIGEST = 'sha256:7be365ac406b807479a3f0538756faff6db6e3d2b3edbaeafff3b9648203c890';
-const RUNS_DIR = path.join(__dirname, '..', 'output', 'soak');
-const DOCS_DIR = path.join(__dirname, '..', 'docs');
+const MODE = process.env.SOAK_MODE === 'full' ? 'full' : 'short';
+const ROUNDS = MODE === 'full' ? 12 : 1;
+const INTERVAL_MS = Number(process.env.SOAK_INTERVAL_MS || (MODE === 'full' ? 15000 : 1000));
+const DRIVER_TIMEOUT_MS = Number(process.env.BOQA_DRIVER_TIMEOUT_MS || 60000);
+const HEAD_SHA = process.env.BOQA_HEAD_SHA || process.env.GITHUB_HEAD_SHA || process.env.GITHUB_SHA || 'unknown';
+const MERGE_SHA = process.env.BOQA_MERGE_SHA || process.env.GITHUB_SHA || null;
+const PROJECT = safeProjectName(`boqa-lab-${HEAD_SHA.slice(0, 12)}-${process.pid}`);
+const RUN_ROOT = path.join(ROOT, 'output', 'soak');
+const RUN_DIR = path.join(RUN_ROOT, `${HEAD_SHA.slice(0, 12)}-${Date.now()}`);
+const LOCK_DIR = path.join(RUN_ROOT, '.qualification.lock');
 
-function runCmd(cmd) {
+function command(program, args, options = {}) {
+  const result = spawnSync(program, args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    timeout: options.timeout || 180000,
+    env: { ...process.env, ...options.env },
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0 && !options.allowFailure) {
+    throw new Error(`COMMAND_FAILED:${program} ${args.join(' ')}\n${result.stdout || ''}\n${result.stderr || ''}`);
+  }
+  return { status: result.status, stdout: result.stdout || '', stderr: result.stderr || '' };
+}
+
+function compose(args, options = {}) {
+  return command('docker', ['compose', '-f', COMPOSE_FILE, '-p', PROJECT, ...args], options);
+}
+
+function acquireLock() {
+  fs.mkdirSync(RUN_ROOT, { recursive: true });
   try {
-    return execSync(cmd, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-  } catch (e) {
-    return (e.stdout || '') + (e.stderr || '');
+    fs.mkdirSync(LOCK_DIR);
+  } catch (error) {
+    if (error.code === 'EEXIST') throw new Error('QUALIFICATION_ALREADY_RUNNING');
+    throw error;
   }
 }
 
-function runCmdThrow(cmd) {
-  return execSync(cmd, { encoding: 'utf8' });
+function releaseLock() {
+  fs.rmSync(LOCK_DIR, { recursive: true, force: true });
 }
 
-async function verifyOCI() {
-  console.log('[Phase 2] Verificando OCI...');
-  runCmdThrow(`docker pull ${LAB_IMAGE}`);
-  const inspectOutput = runCmdThrow(`docker image inspect ${LAB_IMAGE}`);
-  const inspect = JSON.parse(inspectOutput)[0];
-  
-  const manifestMatch = inspect.RepoDigests.some(r => r.includes(LAB_IMAGE));
-  const configMatch = inspect.Id === EXPECTED_CONFIG_DIGEST;
-  
-  if (!manifestMatch || !configMatch) {
-    console.error('Manifest match:', manifestMatch, 'Config match:', configMatch);
-    throw new Error('OCI DIGEST MISMATCH');
-  }
-
-  const ociData = {
-    repoDigests: inspect.RepoDigests,
-    image_id: inspect.Id,
-    architecture: inspect.Architecture,
-    os: inspect.Os,
-    user: inspect.Config.User,
-    entrypoint: inspect.Config.Entrypoint,
-    cmd: inspect.Config.Cmd,
-    manifest_match: manifestMatch,
-    config_match: configMatch
+function inventory() {
+  const filter = `label=com.docker.compose.project=${PROJECT}`;
+  return {
+    containers: command('docker', ['ps', '-aq', '--filter', filter], { allowFailure: true }).stdout.trim().split(/\s+/).filter(Boolean),
+    networks: command('docker', ['network', 'ls', '-q', '--filter', filter], { allowFailure: true }).stdout.trim().split(/\s+/).filter(Boolean),
+    volumes: command('docker', ['volume', 'ls', '-q', '--filter', filter], { allowFailure: true }).stdout.trim().split(/\s+/).filter(Boolean),
   };
-  fs.writeFileSync(path.join(RUNS_DIR, 'materialized-image.json'), JSON.stringify(ociData, null, 2));
-  return ociData;
+}
+
+function assertNoResidue(stage) {
+  const state = inventory();
+  if (state.containers.length || state.networks.length || state.volumes.length) {
+    throw new Error(`RESIDUE_DETECTED:${stage}:${JSON.stringify(state)}`);
+  }
+  return state;
+}
+
+function cleanup() {
+  compose(['down', '-v', '--remove-orphans', '--timeout', '10'], { allowFailure: true, timeout: 60000 });
+  return assertNoResidue('post_cleanup');
+}
+
+function verifyDockerAndImage() {
+  command('docker', ['version']);
+  command('docker', ['compose', 'version']);
+  command('docker', ['pull', MANIFEST.image_reference], { timeout: 300000 });
+  const inspected = JSON.parse(command('docker', ['image', 'inspect', MANIFEST.image_reference]).stdout)[0];
+  const repoDigestMatch = Array.isArray(inspected.RepoDigests)
+    && inspected.RepoDigests.some((item) => item.endsWith(`@${MANIFEST.image_manifest_digest}`));
+  if (!repoDigestMatch) throw new Error('OCI_MANIFEST_DIGEST_MISMATCH');
+  if (inspected.Id !== EXPECTED_CONFIG_DIGEST) throw new Error('OCI_CONFIG_DIGEST_MISMATCH');
+  return {
+    repo_digests: inspected.RepoDigests,
+    image_id: inspected.Id,
+    architecture: inspected.Architecture,
+    os: inspected.Os,
+    configured_user: inspected.Config?.User || '',
+    manifest_match: true,
+    config_match: true,
+  };
 }
 
 function verifyCompose() {
-  console.log('[Phase 3] Verificando Compose...');
-  const composeOut = runCmdThrow(`docker compose --profile lab config`);
-  
-  const internalNet = composeOut.includes('boqa_lab_internal:') && composeOut.includes('internal: true');
-  const readOnly = composeOut.includes('read_only: true');
-  const capDrop = composeOut.includes('cap_drop:\n      - ALL');
-  const noNewPrivs = composeOut.includes('security_opt:\n      - no-new-privileges:true');
-  const noPorts = !composeOut.includes('published:');
-  const noSocket = !composeOut.includes('/var/run/docker.sock');
-  const noPrivileged = !composeOut.includes('privileged: true');
-
-  if (!internalNet || !readOnly || !capDrop || !noNewPrivs || !noPorts || !noSocket || !noPrivileged) {
-    throw new Error('COMPOSE SECURITY POLICY FAILED');
-  }
-
-  const composeData = {
-    internalNet, readOnly, capDrop, noNewPrivs, noPorts, noSocket, noPrivileged
+  const env = {
+    BOQA_REPO_ROOT: ROOT,
+    BOQA_EVIDENCE_DIR: RUN_DIR,
+    BOQA_ROUND_ID: 'config-validation',
   };
-  
-  fs.writeFileSync(path.join(RUNS_DIR, 'compose-normalized.yaml'), composeOut);
-  fs.writeFileSync(path.join(RUNS_DIR, 'runtime-security.json'), JSON.stringify(composeData, null, 2));
-  return composeData;
-}
-
-function verifyIsolation() {
-  console.log('[Phase 5] Verificando Aislamiento...');
-  const testCmds = [
-    'wget -T 2 -q -O- http://169.254.169.254 || echo "BLOCKED"',
-    'wget -T 2 -q -O- http://192.0.2.1 || echo "BLOCKED"',
-    'wget -T 2 -q -O- http://example.invalid || echo "BLOCKED"'
-  ];
-
-  let unauthConnections = 0;
-  for (const cmd of testCmds) {
-    const res = runCmd(`docker compose exec -T boqa-lab-juice-shop sh -c '${cmd}'`);
-    if (!res.includes('BLOCKED')) {
-      unauthConnections++;
-    }
-  }
-  
-  const isolation = { unauthorized_connections: unauthConnections };
-  fs.writeFileSync(path.join(RUNS_DIR, 'network-isolation.json'), JSON.stringify(isolation, null, 2));
-  if (unauthConnections > 0) throw new Error('NETWORK ISOLATION FAILED');
-  return isolation;
-}
-
-async function waitHealth() {
-  for (let i = 0; i < 30; i++) {
-    const ps = runCmd('docker compose ps --format json');
-    if (ps.includes('"Health":"healthy"') || ps.includes('healthy')) {
-      return true;
-    }
-    await new Promise(r => setTimeout(r, 2000));
-  }
-  return false;
-}
-
-async function soak(roundsRequested) {
-  console.log(`[Phase 8] Iniciando Soak de ${roundsRequested} rondas...`);
-  const runtime = new LocalLabRuntime();
-  process.env.BOQA_LAB_ENABLED = 'true';
-  const results = [];
-  
-  let vulnerableConfirmed = 0;
-  let controlsClean = 0;
-  let falsePositives = 0;
-  let falseNegatives = 0;
-  let cleanupFailures = 0;
-
-  for (let i = 1; i <= roundsRequested; i++) {
-    console.log(`Ronda ${i}/${roundsRequested}`);
-    const start = Date.now();
-    runCmdThrow('docker compose --profile lab up -d');
-    const healthy = await waitHealth();
-    if (!healthy) throw new Error('LAB UNHEALTHY');
-    
-    if (i === 1) verifyIsolation();
-
-    const result = await runtime.runOnce();
-    
-    if (result.result?.vulnerable === 'LAB_FINDING_CONFIRMED') vulnerableConfirmed++;
-    else falseNegatives++;
-    
-    if (result.result?.control === 'LAB_CONTROL_CLEAN') controlsClean++;
-    else falsePositives++;
-
-    runCmdThrow('docker compose --profile lab down -v');
-    const psAfter = runCmd('docker compose ps');
-    if (psAfter.includes('boqa-lab-juice-shop')) cleanupFailures++;
-
-    const roundData = {
-      round: i,
-      duration_ms: Date.now() - start,
-      request_count: result.request_count,
-      vulnerable: result.result?.vulnerable,
-      control: result.result?.control,
-      evidence: result.evidence_sha256,
-      cleanup: cleanupFailures === 0
-    };
-    results.push(roundData);
-
-    if (i < roundsRequested) {
-      if (process.env.SOAK_MODE === 'full') {
-        console.log('Esperando intervalo entre rondas...');
-        await new Promise(r => setTimeout(r, 300000));
-      } else {
-        await new Promise(r => setTimeout(r, 1000));
-      }
-    }
-  }
-
-  fs.writeFileSync(path.join(RUNS_DIR, 'round-results.json'), JSON.stringify(results, null, 2));
-  
+  const raw = compose(['config', '--format', 'json'], { env }).stdout;
+  const model = JSON.parse(raw);
+  assertComposePolicy(model);
+  fs.writeFileSync(path.join(RUN_DIR, 'compose-normalized.json'), `${JSON.stringify(model, null, 2)}\n`);
   return {
-    rounds_requested: roundsRequested,
-    rounds_completed: results.length,
-    vulnerable_confirmed: vulnerableConfirmed,
-    controls_clean: controlsClean,
-    false_positives: falsePositives,
-    false_negatives: falseNegatives,
-    cleanup_failures: cleanupFailures
+    internal_network: true,
+    host_ports: 0,
+    docker_socket: 0,
+    privileged: false,
+    capabilities: 'dropped',
+    read_only_runtime: true,
   };
+}
+
+function waitDriver(containerId) {
+  const wait = command('docker', ['wait', containerId], { timeout: DRIVER_TIMEOUT_MS, allowFailure: true });
+  if (wait.status !== 0) {
+    command('docker', ['kill', containerId], { allowFailure: true });
+    throw new Error(`DRIVER_WAIT_FAILED:${wait.stderr}`);
+  }
+  const exitCode = Number(wait.stdout.trim());
+  const logsResult = command('docker', ['logs', containerId], { allowFailure: true });
+  const logs = `${logsResult.stdout}${logsResult.stderr}`;
+  command('docker', ['rm', '-f', containerId], { allowFailure: true });
+  if (exitCode !== 0) throw new Error(`DRIVER_EXIT_${exitCode}:${logs}`);
+  return logs;
+}
+
+function runRound(index) {
+  const roundId = `r${String(index).padStart(2, '0')}-${crypto.randomBytes(5).toString('hex')}`;
+  const env = {
+    BOQA_REPO_ROOT: ROOT,
+    BOQA_EVIDENCE_DIR: RUN_DIR,
+    BOQA_ROUND_ID: roundId,
+  };
+  const preState = assertNoResidue(`pre_round_${index}`);
+  let cleanupState;
+  try {
+    compose(['up', '-d', '--wait', 'candidate', 'control'], { env, timeout: 240000 });
+    const run = compose(['run', '-d', '--no-deps', 'driver'], { env, timeout: 60000 });
+    const containerId = run.stdout.trim().split(/\s+/).pop();
+    if (!/^[a-f0-9]{12,64}$/.test(containerId || '')) throw new Error(`DRIVER_ID_INVALID:${run.stdout}`);
+    waitDriver(containerId);
+    const evidencePath = path.join(RUN_DIR, `round-${roundId}.json`);
+    const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+    assertRoundEvidence(evidence, MANIFEST);
+    return { roundId, evidence, preState, evidencePath };
+  } finally {
+    cleanupState = cleanup();
+    const evidencePath = path.join(RUN_DIR, `round-${roundId}.json`);
+    if (fs.existsSync(evidencePath)) {
+      const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+      evidence.cleanup_verified = true;
+      evidence.cleanup_inventory = cleanupState;
+      fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+    }
+  }
+}
+
+function writeChecksums() {
+  const checksumPath = path.join(RUN_DIR, 'SHA256SUMS');
+  const files = fs.readdirSync(RUN_DIR)
+    .filter((name) => name !== 'SHA256SUMS')
+    .sort();
+  const lines = files.map((name) => `${sha256(fs.readFileSync(path.join(RUN_DIR, name)))}  ${name}`);
+  fs.writeFileSync(checksumPath, `${lines.join('\n')}\n`);
+  return sha256(fs.readFileSync(checksumPath));
 }
 
 async function main() {
-  fs.mkdirSync(RUNS_DIR, { recursive: true });
-  fs.mkdirSync(DOCS_DIR, { recursive: true });
-
-  const oci = await verifyOCI();
-  const compose = verifyCompose();
-  
-  const rounds = process.env.SOAK_MODE === 'full' ? 12 : 1;
-  const soakResults = await soak(rounds);
-  
-  const manifest = {
-    candidate_sha: process.env.GITHUB_SHA || runCmdThrow('git rev-parse HEAD').trim(),
-    tree_sha: runCmdThrow('git rev-parse HEAD^{tree}').trim(),
-    image_digest_match: oci.manifest_match,
-    config_digest_match: oci.config_match,
-    runtime_user: oci.user,
-    read_only_runtime: compose.readOnly,
-    healthcheck_tool: 'node',
-    internal_network: compose.internalNet,
-    host_ports: compose.noPorts ? 0 : 1,
-    docker_socket: compose.noSocket ? 0 : 1,
-    privileged: !compose.noPrivileged,
-    capabilities: compose.capDrop ? 'dropped' : 'kept',
-    runtime_egress: 'blocked',
-    unauthorized_connections: 0,
-    ...soakResults,
-    evidence_integrity: 'valid',
-    production_accessed: false,
-    deploy_performed: false
+  acquireLock();
+  fs.mkdirSync(RUN_DIR, { recursive: false });
+  fs.chmodSync(RUN_DIR, 0o777);
+  const gate = {
+    schema_version: 1,
+    qualification_green: false,
+    mode: MODE,
+    head_sha: HEAD_SHA,
+    merge_sha: MERGE_SHA,
+    project: PROJECT,
+    run_dir: path.relative(ROOT, RUN_DIR),
+    started_at: new Date().toISOString(),
+    gates: {},
   };
+  const gatePath = path.join(RUN_DIR, 'gate-status.json');
+  const writeGate = () => fs.writeFileSync(gatePath, `${JSON.stringify(gate, null, 2)}\n`);
+  writeGate();
+  try {
+    assertNoResidue('initial');
+    gate.gates.pre_run_clean = 'PASS';
+    const oci = verifyDockerAndImage();
+    fs.writeFileSync(path.join(RUN_DIR, 'materialized-image.json'), `${JSON.stringify(oci, null, 2)}\n`);
+    gate.gates.oci_identity = 'PASS';
+    const composeSecurity = verifyCompose();
+    gate.gates.compose_policy = 'PASS';
+    writeGate();
 
-  fs.writeFileSync(path.join(DOCS_DIR, 'boqa-real-docker-soak-v1.json'), JSON.stringify(manifest, null, 2));
-  fs.writeFileSync(path.join(RUNS_DIR, 'soak-summary.json'), JSON.stringify(soakResults, null, 2));
-  
-  runCmdThrow(`cd ${RUNS_DIR} && sha256sum * > SHA256SUMS`);
-  console.log('Validación completa.');
+    const rounds = [];
+    for (let index = 1; index <= ROUNDS; index += 1) {
+      const completed = runRound(index);
+      const evidence = JSON.parse(fs.readFileSync(completed.evidencePath, 'utf8'));
+      rounds.push(evidence);
+      if (index < ROUNDS) await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
+    }
+    const summary = summarizeRounds(rounds);
+    if (summary.rounds_completed !== ROUNDS || summary.false_positives || summary.false_negatives || summary.cleanup_failures) {
+      throw new Error(`SOAK_ASSERTION_FAILED:${JSON.stringify(summary)}`);
+    }
+    fs.writeFileSync(path.join(RUN_DIR, 'round-results.json'), `${JSON.stringify(rounds, null, 2)}\n`);
+    fs.writeFileSync(path.join(RUN_DIR, 'soak-summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
+    gate.gates.round_assertions = 'PASS';
+    gate.gates.cleanup = 'PASS';
+    gate.gates.egress = 'PASS';
+
+    const manifest = {
+      schema_version: 1,
+      candidate_head_sha: HEAD_SHA,
+      candidate_merge_sha: MERGE_SHA,
+      source_tree_sha: process.env.BOQA_TREE_SHA || null,
+      image_digest_match: true,
+      config_digest_match: true,
+      configured_runtime_user: oci.configured_user,
+      driver_runtime_user: '1000:1000',
+      ...composeSecurity,
+      runtime_egress: 'blocked',
+      unauthorized_connections: 0,
+      ...summary,
+      evidence_integrity: 'valid',
+      production_accessed: false,
+      deploy_performed: false,
+      completed_at: new Date().toISOString(),
+    };
+    fs.mkdirSync(path.join(ROOT, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(ROOT, 'docs', 'boqa-real-docker-soak-v1.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+    gate.qualification_green = true;
+    gate.completed_at = new Date().toISOString();
+    gate.gates.final = 'PASS';
+    writeGate();
+    const sha256sumsDigest = writeChecksums();
+    process.stdout.write(`${JSON.stringify({ status: 'PASS', summary, run_dir: gate.run_dir, sha256sums_digest: sha256sumsDigest })}\n`);
+  } catch (error) {
+    gate.qualification_green = false;
+    gate.completed_at = new Date().toISOString();
+    gate.failure = error.stack || error.message;
+    gate.gates.final = 'FAIL';
+    writeGate();
+    throw error;
+  } finally {
+    cleanup();
+    releaseLock();
+  }
 }
 
-main().catch(e => {
-  console.error('ERROR CRITICO:', e);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`${error.stack || error.message}\n`);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  assertNoResidue,
+  command,
+  inventory,
+  verifyCompose,
+  verifyDockerAndImage,
+};
