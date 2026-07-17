@@ -84,6 +84,43 @@ jobs:
           git diff --check
           node scripts/gate-status.js diff_check PASS
 
+      - name: Candidate startup diagnostic
+        id: candidate_startup
+        continue-on-error: true
+        env:
+          BOQA_REPO_ROOT: ${{ github.workspace }}
+          BOQA_EVIDENCE_DIR: ${{ github.workspace }}/output/soak/startup-diagnostic
+          BOQA_ROUND_ID: startup-diagnostic
+        run: |
+          set -uo pipefail
+          mkdir -p output/soak/workflow "$BOQA_EVIDENCE_DIR"
+          PROJECT="boqa-startup-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          COMPOSE=(docker compose -f compose.lab.yaml -p "$PROJECT")
+          "${COMPOSE[@]}" up -d candidate >output/soak/workflow/candidate-startup-command.log 2>&1
+          UP_STATUS=$?
+          CID=$("${COMPOSE[@]}" ps -q candidate 2>/dev/null || true)
+          STATE=missing
+          HEALTH=missing
+          if [ -n "$CID" ]; then
+            for _ in $(seq 1 30); do
+              STATE=$(docker inspect -f '{{.State.Status}}' "$CID" 2>/dev/null || echo missing)
+              HEALTH=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" 2>/dev/null || echo missing)
+              [ "$HEALTH" = healthy ] && break
+              [ "$STATE" = exited ] && break
+              sleep 2
+            done
+          fi
+          "${COMPOSE[@]}" ps -a >output/soak/workflow/candidate-startup-ps.log 2>&1 || true
+          "${COMPOSE[@]}" logs --no-color candidate >output/soak/workflow/candidate-startup.log 2>&1 || true
+          printf '{"up_status":%s,"container_id":"%s","state":"%s","health":"%s"}\n' "$UP_STATUS" "$CID" "$STATE" "$HEALTH" >output/soak/workflow/candidate-startup-status.json
+          "${COMPOSE[@]}" down -v --remove-orphans --timeout 10 >>output/soak/workflow/candidate-startup-command.log 2>&1 || true
+          if [ "$UP_STATUS" -ne 0 ] || [ "$STATE" != running ] || [ "$HEALTH" != healthy ]; then
+            node scripts/gate-status.js candidate_startup FAIL
+            cat output/soak/workflow/candidate-startup.log
+            exit 1
+          fi
+          node scripts/gate-status.js candidate_startup PASS
+
       - name: Real isolated Docker qualification
         id: docker_qualification
         continue-on-error: true
@@ -98,7 +135,7 @@ jobs:
         if: always()
         run: |
           set -Eeuo pipefail
-          if [ "${{ steps.full_suite.outcome }}" != "success" ] || [ "${{ steps.diff_integrity.outcome }}" != "success" ] || [ "${{ steps.docker_qualification.outcome }}" != "success" ]; then
+          if [ "${{ steps.full_suite.outcome }}" != "success" ] || [ "${{ steps.diff_integrity.outcome }}" != "success" ] || [ "${{ steps.candidate_startup.outcome }}" != "success" ] || [ "${{ steps.docker_qualification.outcome }}" != "success" ]; then
             node scripts/gate-status.js workflow FAIL
             exit 1
           fi
