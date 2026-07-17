@@ -7,6 +7,7 @@ const { spawnSync } = require('child_process');
 const {
   assertComposePolicy,
   assertRoundEvidence,
+  finalizeRoundEvidence,
   safeProjectName,
   sha256,
   summarizeRounds,
@@ -25,6 +26,7 @@ const MERGE_SHA = process.env.BOQA_MERGE_SHA || process.env.GITHUB_SHA || null;
 const PROJECT = safeProjectName(`boqa-lab-${HEAD_SHA.slice(0, 12)}-${process.pid}`);
 const RUN_ROOT = path.join(ROOT, 'output', 'soak');
 const RUN_DIR = path.join(RUN_ROOT, `${HEAD_SHA.slice(0, 12)}-${Date.now()}`);
+const DRIVER_DIR = path.join(RUN_DIR, 'driver');
 const LOCK_DIR = path.join(RUN_ROOT, '.qualification.lock');
 
 function command(program, args, options = {}) {
@@ -76,7 +78,7 @@ function assertNoResidue(stage) {
   return state;
 }
 
-function cleanup(env = { BOQA_REPO_ROOT: ROOT, BOQA_EVIDENCE_DIR: RUN_DIR, BOQA_ROUND_ID: 'cleanup' }) {
+function cleanup(env = { BOQA_REPO_ROOT: ROOT, BOQA_EVIDENCE_DIR: DRIVER_DIR, BOQA_ROUND_ID: 'cleanup' }) {
   compose(['down', '-v', '--remove-orphans', '--timeout', '10'], { allowFailure: true, timeout: 60000, env });
   return assertNoResidue('post_cleanup');
 }
@@ -104,13 +106,13 @@ function verifyDockerAndImage() {
 function verifyCompose() {
   const env = {
     BOQA_REPO_ROOT: ROOT,
-    BOQA_EVIDENCE_DIR: RUN_DIR,
+    BOQA_EVIDENCE_DIR: DRIVER_DIR,
     BOQA_ROUND_ID: 'config-validation',
   };
   const raw = compose(['config', '--format', 'json'], { env }).stdout;
   const model = JSON.parse(raw);
   assertComposePolicy(model);
-  fs.writeFileSync(path.join(RUN_DIR, 'compose-normalized.json'), `${JSON.stringify(model, null, 2)}\n`);
+  fs.writeFileSync(path.join(RUN_DIR, 'compose-normalized.json'), `${JSON.stringify(model, null, 2)}\n`, { flag: 'wx' });
   return {
     internal_network: true,
     host_ports: 0,
@@ -147,50 +149,95 @@ function runRound(index) {
   const roundId = `r${String(index).padStart(2, '0')}-${crypto.randomBytes(5).toString('hex')}`;
   const env = {
     BOQA_REPO_ROOT: ROOT,
-    BOQA_EVIDENCE_DIR: RUN_DIR,
+    BOQA_EVIDENCE_DIR: DRIVER_DIR,
     BOQA_ROUND_ID: roundId,
   };
   const preState = assertNoResidue(`pre_round_${index}`);
-  let cleanupState;
+  const driverEvidencePath = path.join(DRIVER_DIR, `driver-round-${roundId}.json`);
+  const finalEvidencePath = path.join(RUN_DIR, `round-${roundId}.json`);
+  let driverEvidence = null;
+  let finalEvidence = null;
+  let executionError = null;
+  let cleanupError = null;
+  let cleanupState = null;
+  let finalizationError = null;
+
   try {
     compose(['up', '-d', '--wait', 'candidate', 'control'], { env, timeout: 240000 });
     const run = compose(['run', '-d', '--no-deps', 'driver'], { env, timeout: 60000 });
     const containerId = run.stdout.trim().split(/\s+/).pop();
     if (!/^[a-f0-9]{12,64}$/.test(containerId || '')) throw new Error(`DRIVER_ID_INVALID:${run.stdout}`);
     waitDriver(containerId);
-    const evidencePath = path.join(RUN_DIR, `round-${roundId}.json`);
-    const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
-    assertRoundEvidence(evidence, MANIFEST);
-    return { roundId, evidence, preState, evidencePath };
+    driverEvidence = JSON.parse(fs.readFileSync(driverEvidencePath, 'utf8'));
+    assertRoundEvidence(driverEvidence, MANIFEST);
+  } catch (error) {
+    executionError = error;
   } finally {
-    cleanupState = cleanup(env);
-    const evidencePath = path.join(RUN_DIR, `round-${roundId}.json`);
-    if (fs.existsSync(evidencePath)) {
-      const evidence = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
-      evidence.driver_evidence_sha256 = evidence.evidence_sha256;
-      delete evidence.evidence_sha256;
-      evidence.cleanup_verified = true;
-      evidence.cleanup_inventory = cleanupState;
-      evidence.evidence_sha256 = sha256(JSON.stringify(evidence));
-      fs.writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+    try {
+      cleanupState = cleanup(env);
+    } catch (error) {
+      cleanupError = error;
+      cleanupState = inventory();
+    }
+
+    if (!driverEvidence && fs.existsSync(driverEvidencePath)) {
+      try {
+        driverEvidence = JSON.parse(fs.readFileSync(driverEvidencePath, 'utf8'));
+        assertRoundEvidence(driverEvidence, MANIFEST);
+      } catch (error) {
+        finalizationError = error;
+      }
+    }
+
+    if (driverEvidence && !finalizationError) {
+      try {
+        finalEvidence = finalizeRoundEvidence(driverEvidence, {
+          preState,
+          cleanupState,
+          cleanupVerified: !cleanupError,
+          cleanupError: cleanupError ? cleanupError.message : null,
+        });
+        assertRoundEvidence(finalEvidence, MANIFEST);
+        fs.writeFileSync(finalEvidencePath, `${JSON.stringify(finalEvidence, null, 2)}\n`, { flag: 'wx', mode: 0o644 });
+      } catch (error) {
+        finalizationError = error;
+      }
     }
   }
+
+  if (executionError) throw executionError;
+  if (finalizationError) throw finalizationError;
+  if (cleanupError) throw cleanupError;
+  if (!finalEvidence) throw new Error('FINAL_EVIDENCE_MISSING');
+  return { roundId, evidence: finalEvidence, preState, evidencePath: finalEvidencePath, driverEvidencePath };
+}
+
+function listFilesRecursive(directory, prefix = '') {
+  const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+  const files = [];
+  for (const entry of entries) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (relative === 'SHA256SUMS') continue;
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...listFilesRecursive(absolute, relative));
+    else if (entry.isFile()) files.push(relative);
+  }
+  return files;
 }
 
 function writeChecksums() {
   const checksumPath = path.join(RUN_DIR, 'SHA256SUMS');
-  const files = fs.readdirSync(RUN_DIR)
-    .filter((name) => name !== 'SHA256SUMS')
-    .sort();
+  const files = listFilesRecursive(RUN_DIR);
   const lines = files.map((name) => `${sha256(fs.readFileSync(path.join(RUN_DIR, name)))}  ${name}`);
-  fs.writeFileSync(checksumPath, `${lines.join('\n')}\n`);
+  fs.writeFileSync(checksumPath, `${lines.join('\n')}\n`, { flag: 'wx', mode: 0o644 });
   return sha256(fs.readFileSync(checksumPath));
 }
 
 async function main() {
   acquireLock();
-  fs.mkdirSync(RUN_DIR, { recursive: false });
-  fs.chmodSync(RUN_DIR, 0o777);
+  fs.mkdirSync(RUN_DIR, { recursive: false, mode: 0o755 });
+  fs.mkdirSync(DRIVER_DIR, { recursive: false, mode: 0o733 });
+  fs.chmodSync(DRIVER_DIR, 0o733);
   const gate = {
     schema_version: 1,
     qualification_green: false,
@@ -209,7 +256,7 @@ async function main() {
     assertNoResidue('initial');
     gate.gates.pre_run_clean = 'PASS';
     const oci = verifyDockerAndImage();
-    fs.writeFileSync(path.join(RUN_DIR, 'materialized-image.json'), `${JSON.stringify(oci, null, 2)}\n`);
+    fs.writeFileSync(path.join(RUN_DIR, 'materialized-image.json'), `${JSON.stringify(oci, null, 2)}\n`, { flag: 'wx' });
     gate.gates.oci_identity = 'PASS';
     const composeSecurity = verifyCompose();
     gate.gates.compose_policy = 'PASS';
@@ -218,16 +265,15 @@ async function main() {
     const rounds = [];
     for (let index = 1; index <= ROUNDS; index += 1) {
       const completed = runRound(index);
-      const evidence = JSON.parse(fs.readFileSync(completed.evidencePath, 'utf8'));
-      rounds.push(evidence);
+      rounds.push(completed.evidence);
       if (index < ROUNDS) await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
     }
     const summary = summarizeRounds(rounds);
     if (summary.rounds_completed !== ROUNDS || summary.false_positives || summary.false_negatives || summary.cleanup_failures) {
       throw new Error(`SOAK_ASSERTION_FAILED:${JSON.stringify(summary)}`);
     }
-    fs.writeFileSync(path.join(RUN_DIR, 'round-results.json'), `${JSON.stringify(rounds, null, 2)}\n`);
-    fs.writeFileSync(path.join(RUN_DIR, 'soak-summary.json'), `${JSON.stringify(summary, null, 2)}\n`);
+    fs.writeFileSync(path.join(RUN_DIR, 'round-results.json'), `${JSON.stringify(rounds, null, 2)}\n`, { flag: 'wx' });
+    fs.writeFileSync(path.join(RUN_DIR, 'soak-summary.json'), `${JSON.stringify(summary, null, 2)}\n`, { flag: 'wx' });
     gate.gates.round_assertions = 'PASS';
     gate.gates.cleanup = 'PASS';
     gate.gates.egress = 'PASS';
@@ -253,7 +299,7 @@ async function main() {
     fs.mkdirSync(path.join(ROOT, 'docs'), { recursive: true });
     const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`;
     fs.writeFileSync(path.join(ROOT, 'docs', 'boqa-real-docker-soak-v1.json'), manifestJson);
-    fs.writeFileSync(path.join(RUN_DIR, 'qualification-manifest.json'), manifestJson);
+    fs.writeFileSync(path.join(RUN_DIR, 'qualification-manifest.json'), manifestJson, { flag: 'wx' });
     gate.qualification_green = true;
     gate.completed_at = new Date().toISOString();
     gate.gates.final = 'PASS';
@@ -266,10 +312,22 @@ async function main() {
     gate.failure = error.stack || error.message;
     gate.gates.final = 'FAIL';
     writeGate();
+    if (!fs.existsSync(path.join(RUN_DIR, 'SHA256SUMS'))) {
+      try {
+        gate.failure_artifact_sha256sums = writeChecksums();
+        writeGate();
+      } catch (checksumError) {
+        gate.checksum_error = checksumError.message;
+        writeGate();
+      }
+    }
     throw error;
   } finally {
-    cleanup();
-    releaseLock();
+    try {
+      cleanup();
+    } finally {
+      releaseLock();
+    }
   }
 }
 
