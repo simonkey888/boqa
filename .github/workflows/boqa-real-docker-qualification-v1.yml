@@ -84,6 +84,51 @@ jobs:
           git diff --check
           node scripts/gate-status.js diff_check PASS
 
+      - name: Candidate image identity diagnostic
+        id: candidate_identity
+        continue-on-error: true
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/soak/workflow
+          trap 'node scripts/gate-status.js candidate_identity FAIL' ERR
+          IMAGE=$(node -p "require('./qualification/labs/juice-shop-v1/manifest.json').image_reference")
+          docker pull "$IMAGE" >output/soak/workflow/candidate-image-pull.log 2>&1
+          docker image inspect "$IMAGE" >output/soak/workflow/candidate-image-inspect.json
+          docker run --rm \
+            --network none \
+            --read-only \
+            --cap-drop ALL \
+            --security-opt no-new-privileges:true \
+            --entrypoint /nodejs/bin/node \
+            "$IMAGE" \
+            -e 'process.stdout.write(JSON.stringify({exec_path:process.execPath,node:process.version,uid:process.getuid(),gid:process.getgid(),path:process.env.PATH||null})+"\n")' \
+            >output/soak/workflow/candidate-image-node-probe.json
+          node <<'NODE'
+          const fs = require('fs');
+          const manifest = require('./qualification/labs/juice-shop-v1/manifest.json');
+          const image = JSON.parse(fs.readFileSync('output/soak/workflow/candidate-image-inspect.json', 'utf8'))[0];
+          const probe = JSON.parse(fs.readFileSync('output/soak/workflow/candidate-image-node-probe.json', 'utf8'));
+          const digestOk = Array.isArray(image.RepoDigests)
+            && image.RepoDigests.some((value) => value.endsWith(`@${manifest.image_manifest_digest}`));
+          if (!digestOk) throw new Error('CANDIDATE_MANIFEST_DIGEST_MISMATCH');
+          if (image.Id !== manifest.image_config_digest) throw new Error('CANDIDATE_CONFIG_DIGEST_MISMATCH');
+          if (String(image.Config?.User || '') !== '65532') throw new Error(`CANDIDATE_IMAGE_USER_UNEXPECTED:${image.Config?.User || ''}`);
+          if (probe.exec_path !== '/nodejs/bin/node') throw new Error(`CANDIDATE_NODE_PATH_UNEXPECTED:${probe.exec_path}`);
+          if (probe.uid !== 65532) throw new Error(`CANDIDATE_NODE_UID_UNEXPECTED:${probe.uid}`);
+          const summary = {
+            image_reference: manifest.image_reference,
+            manifest_digest: manifest.image_manifest_digest,
+            config_digest: image.Id,
+            configured_user: image.Config.User,
+            configured_env: image.Config.Env || [],
+            runtime_probe: probe,
+            digest_verified: true,
+            binary_verified: true,
+          };
+          fs.writeFileSync('output/soak/workflow/candidate-image-identity.json', `${JSON.stringify(summary, null, 2)}\n`, { flag: 'wx' });
+          NODE
+          node scripts/gate-status.js candidate_identity PASS
+
       - name: Candidate startup diagnostic
         id: candidate_startup
         continue-on-error: true
@@ -101,6 +146,7 @@ jobs:
           CID=$("${COMPOSE[@]}" ps -q candidate 2>/dev/null || true)
           STATE=missing
           HEALTH=missing
+          NODE_PROBE_STATUS=1
           if [ -n "$CID" ]; then
             for _ in $(seq 1 90); do
               STATE=$(docker inspect -f '{{.State.Status}}' "$CID" 2>/dev/null || echo missing)
@@ -110,6 +156,13 @@ jobs:
               [ "$STATE" = exited ] && break
               sleep 2
             done
+            docker inspect "$CID" >output/soak/workflow/candidate-container-inspect.json 2>/dev/null || printf '[]\n' >output/soak/workflow/candidate-container-inspect.json
+            docker exec "$CID" /nodejs/bin/node -e 'process.stdout.write(JSON.stringify({exec_path:process.execPath,node:process.version,uid:process.getuid(),gid:process.getgid(),path:process.env.PATH||null})+"\n")' >output/soak/workflow/candidate-container-node-probe.json 2>output/soak/workflow/candidate-container-node-probe.err
+            NODE_PROBE_STATUS=$?
+          else
+            printf '[]\n' >output/soak/workflow/candidate-container-inspect.json
+            printf 'null\n' >output/soak/workflow/candidate-container-node-probe.json
+            printf 'container missing\n' >output/soak/workflow/candidate-container-node-probe.err
           fi
           "${COMPOSE[@]}" ps -a >output/soak/workflow/candidate-startup-ps.log 2>&1 || true
           "${COMPOSE[@]}" logs --no-color candidate >output/soak/workflow/candidate-startup.log 2>&1 || true
@@ -118,12 +171,13 @@ jobs:
           else
             printf 'null\n' >output/soak/workflow/candidate-startup-health.json
           fi
-          printf '{"up_status":%s,"container_id":"%s","state":"%s","health":"%s"}\n' "$UP_STATUS" "$CID" "$STATE" "$HEALTH" >output/soak/workflow/candidate-startup-status.json
+          printf '{"up_status":%s,"container_id":"%s","state":"%s","health":"%s","node_probe_status":%s}\n' "$UP_STATUS" "$CID" "$STATE" "$HEALTH" "$NODE_PROBE_STATUS" >output/soak/workflow/candidate-startup-status.json
           "${COMPOSE[@]}" down -v --remove-orphans --timeout 10 >>output/soak/workflow/candidate-startup-command.log 2>&1 || true
-          if [ "$UP_STATUS" -ne 0 ] || [ "$STATE" != running ] || [ "$HEALTH" != healthy ]; then
+          if [ "$UP_STATUS" -ne 0 ] || [ "$STATE" != running ] || [ "$HEALTH" != healthy ] || [ "$NODE_PROBE_STATUS" -ne 0 ]; then
             node scripts/gate-status.js candidate_startup FAIL
             cat output/soak/workflow/candidate-startup-status.json
             cat output/soak/workflow/candidate-startup-health.json
+            cat output/soak/workflow/candidate-container-node-probe.err
             cat output/soak/workflow/candidate-startup.log
             exit 1
           fi
@@ -143,7 +197,7 @@ jobs:
         if: always()
         run: |
           set -Eeuo pipefail
-          if [ "${{ steps.full_suite.outcome }}" != "success" ] || [ "${{ steps.diff_integrity.outcome }}" != "success" ] || [ "${{ steps.candidate_startup.outcome }}" != "success" ] || [ "${{ steps.docker_qualification.outcome }}" != "success" ]; then
+          if [ "${{ steps.full_suite.outcome }}" != "success" ] || [ "${{ steps.diff_integrity.outcome }}" != "success" ] || [ "${{ steps.candidate_identity.outcome }}" != "success" ] || [ "${{ steps.candidate_startup.outcome }}" != "success" ] || [ "${{ steps.docker_qualification.outcome }}" != "success" ]; then
             node scripts/gate-status.js workflow FAIL
             exit 1
           fi
