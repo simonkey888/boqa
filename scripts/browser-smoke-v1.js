@@ -135,10 +135,20 @@ async function waitForHealthy(url, timeoutMs = 60_000) {
   throw new Error(`BACKEND_NOT_HEALTHY:${last}`);
 }
 
-function wireDiagnostics(page, result) {
+function isExpectedAuthConsoleError(text) {
+  return /^Failed to load resource: the server responded with a status of (401 \(Unauthorized\)|403 \(Forbidden\))$/.test(text);
+}
+
+function wireDiagnostics(page, result, options = {}) {
   page.on('pageerror', (error) => result.page_errors.push(error.message));
   page.on('console', (message) => {
-    if (message.type() === 'error') result.console_errors.push(message.text());
+    if (message.type() !== 'error') return;
+    const text = message.text();
+    if (options.allowExpectedAuthErrors && isExpectedAuthConsoleError(text)) {
+      result.expected_auth_console_errors.push(text);
+      return;
+    }
+    result.console_errors.push(text);
   });
 }
 
@@ -174,8 +184,8 @@ async function publicSmoke(browser, viewport, label) {
 async function privateSmoke(browser, billingPin) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
-  const result = { page_errors: [], console_errors: [] };
-  wireDiagnostics(page, result);
+  const result = { page_errors: [], console_errors: [], expected_auth_console_errors: [] };
+  wireDiagnostics(page, result, { allowExpectedAuthErrors: true });
   const response = await page.goto(`${EDGE_URL}/cobros`, { waitUntil: 'networkidle' });
   assert(response && response.ok(), 'PRIVATE_NAVIGATION_FAILED');
   const headers = response.headers();
@@ -241,7 +251,8 @@ async function privateSmoke(browser, billingPin) {
   }).then((response) => response.status));
   assert.equal(tamperedStatus, 401);
   assert.equal(result.page_errors.length, 0, `PRIVATE_PAGEERROR:${result.page_errors.join('|')}`);
-  assert.equal(result.console_errors.length, 0, `PRIVATE_CONSOLE:${result.console_errors.join('|')}`);
+  assert.equal(result.console_errors.length, 0, `PRIVATE_CRITICAL_CONSOLE:${result.console_errors.join('|')}`);
+  assert(result.expected_auth_console_errors.length >= 4, 'EXPECTED_AUTH_CONSOLE_EVENTS_MISSING');
   result.anonymous_data_status = anonymousDataStatus;
   result.authenticated = true;
   result.cookie = { http_only: true, secure: true, same_site: 'Strict' };
@@ -311,6 +322,7 @@ async function main() {
     evidence.private = await privateSmoke(browser, billingPin);
     evidence.page_errors = evidence.public.reduce((sum, item) => sum + item.page_errors.length, 0) + evidence.private.page_errors.length;
     evidence.console_errors = evidence.public.reduce((sum, item) => sum + item.console_errors.length, 0) + evidence.private.console_errors.length;
+    evidence.expected_auth_console_errors = evidence.private.expected_auth_console_errors.length;
     evidence.status = 'PASS';
   } catch (error) {
     evidence.status = 'FAIL';
