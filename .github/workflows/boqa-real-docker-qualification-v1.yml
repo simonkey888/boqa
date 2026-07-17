@@ -2,68 +2,107 @@ name: BOQA Real Docker Qualification Gate V1
 
 on:
   pull_request:
-    branches: [ "main", "feat/*" ]
+    branches:
+      - main
+      - 'feat/**'
 
 permissions:
   contents: read
+  pull-requests: read
+
+concurrency:
+  group: boqa-qualification-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   qualification:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
+    timeout-minutes: 35
     env:
-      CI: true
-      BOQA_AUTO_ANALYZE: false
-      BOQA_ADMIN_EXECUTION_ENABLED: false
-      BOQA_OTEL_ENABLED: false
-      BOQA_INSTANCE_COUNT: 1
-      BOQA_API_KEY: 'dummy-api-key'
-      BOQA_HMAC_SECRET: 'dummy-hmac-secret'
-      BOQA_BILLING_PIN: '123456'
-      npm_config_cache: ${{ github.workspace }}/.npm-cache
-      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+      CI: 'true'
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      BOQA_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BOQA_MERGE_SHA: ${{ github.sha }}
+      BOQA_TREE_SHA: ${{ github.event.pull_request.head.sha }}
+      SOAK_MODE: short
+      SOAK_INTERVAL_MS: '1000'
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Checkout exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          node-version: 20
-          
-      - name: Admission & Reproducible Install
-        run: npm ci
-        
-      - name: Syntax Check
-        run: node --check server.js lib/*.js routes/*.js scripts/*.js agent.js
-        
-      - name: Focused Lab Tests
-        run: node test/test-local-lab-runtime.js && node test/test-local-lab-docker.js
-        
-      - name: Public/Private Boundary Tests
-        run: node test/test-public-private-boundary.js && node test/test-defensive-private.js
-        
-      - name: Full Suite (Fallback)
-        run: npm run test
-        
-      - name: Secret Scan (mock)
-        run: echo "No secrets found"
-        
-      - name: Diff Check
-        run: git diff --check
-        
-      - name: Real Docker Soak (1 Round)
-        env:
-          SOAK_MODE: short
-        run: node scripts/soak-test.js
-        
-      - name: Upload Evidence Artifact
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Initialize workflow evidence
+        run: node scripts/gate-status.js workflow STARTED
+
+      - name: Reproducible install
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js npm_ci FAIL' ERR
+          npm ci
+          node scripts/gate-status.js npm_ci PASS
+
+      - name: Syntax gate
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js syntax FAIL' ERR
+          node --check server.js lib/*.js routes/*.js scripts/*.js agent.js
+          node scripts/gate-status.js syntax PASS
+
+      - name: Focused production-helper tests
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js focused_tests FAIL' ERR
+          node test/test-local-lab-runtime.js
+          node test/test-soak-qualification-helpers.js
+          node test/test-public-private-boundary.js
+          node test/test-defensive-private.js
+          node scripts/gate-status.js focused_tests PASS
+
+      - name: Full regression suite
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js full_suite FAIL' ERR
+          npm run test
+          node scripts/gate-status.js full_suite PASS
+
+      - name: Diff integrity
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js diff_check FAIL' ERR
+          git diff --check
+          node scripts/gate-status.js diff_check PASS
+
+      - name: Real isolated Docker qualification
+        run: |
+          set -Eeuo pipefail
+          trap 'node scripts/gate-status.js docker_qualification FAIL' ERR
+          node scripts/soak-test.js
+          node scripts/gate-status.js docker_qualification PASS
+
+      - name: Final workflow gate
+        if: success()
+        run: node scripts/gate-status.js workflow PASS
+
+      - name: Record workflow failure
+        if: failure()
+        run: node scripts/gate-status.js workflow FAIL
+
+      - name: Upload qualification evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: boqa-real-docker-qualification-${{ github.sha }}
+          name: boqa-real-docker-qualification-${{ github.event.pull_request.head.sha }}
           path: |
             output/soak/
             docs/boqa-real-docker-soak-v1.json
+          if-no-files-found: warn
+          retention-days: 14
