@@ -6,6 +6,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const {
   assertComposePolicy,
+  assertFinalRoundEvidence,
   assertRoundEvidence,
   finalizeRoundEvidence,
   safeProjectName,
@@ -22,12 +23,15 @@ const ROUNDS = MODE === 'full' ? 12 : 1;
 const INTERVAL_MS = Number(process.env.SOAK_INTERVAL_MS || (MODE === 'full' ? 15000 : 1000));
 const DRIVER_TIMEOUT_MS = Number(process.env.BOQA_DRIVER_TIMEOUT_MS || 60000);
 const HEAD_SHA = process.env.BOQA_HEAD_SHA || process.env.GITHUB_HEAD_SHA || process.env.GITHUB_SHA || 'unknown';
-const MERGE_SHA = process.env.BOQA_MERGE_SHA || process.env.GITHUB_SHA || null;
+const MERGE_SHA = /^[a-f0-9]{40}$/.test(process.env.BOQA_MERGE_SHA || '')
+  ? process.env.BOQA_MERGE_SHA
+  : (/^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA || '') ? process.env.GITHUB_SHA : null);
 const PROJECT = safeProjectName(`boqa-lab-${HEAD_SHA.slice(0, 12)}-${process.pid}`);
 const RUN_ROOT = path.join(ROOT, 'output', 'soak');
 const RUN_DIR = path.join(RUN_ROOT, `${HEAD_SHA.slice(0, 12)}-${Date.now()}`);
 const DRIVER_DIR = path.join(RUN_DIR, 'driver');
 const LOCK_DIR = path.join(RUN_ROOT, '.qualification.lock');
+let TREE_SHA = null;
 
 function command(program, args, options = {}) {
   const result = spawnSync(program, args, {
@@ -123,29 +127,91 @@ function verifyCompose() {
   };
 }
 
+function inspectContainer(containerId) {
+  if (!/^[a-f0-9]{12,64}$/.test(containerId || '')) throw new Error(`CONTAINER_ID_INVALID:${containerId || ''}`);
+  const inspected = JSON.parse(command('docker', ['inspect', containerId]).stdout)[0];
+  const health = inspected.State?.Health || null;
+  return {
+    id: inspected.Id,
+    name: String(inspected.Name || '').replace(/^\//, ''),
+    image_id: inspected.Image || null,
+    image_reference: inspected.Config?.Image || null,
+    configured_user: inspected.Config?.User || null,
+    state: {
+      status: inspected.State?.Status || null,
+      running: inspected.State?.Running === true,
+      exit_code: Number.isInteger(inspected.State?.ExitCode) ? inspected.State.ExitCode : null,
+      health: health?.Status || null,
+    },
+    security: {
+      privileged: inspected.HostConfig?.Privileged === true,
+      readonly_rootfs: inspected.HostConfig?.ReadonlyRootfs === true,
+      network_mode: inspected.HostConfig?.NetworkMode || null,
+      cap_drop: inspected.HostConfig?.CapDrop || [],
+      security_opt: inspected.HostConfig?.SecurityOpt || [],
+      pids_limit: inspected.HostConfig?.PidsLimit ?? null,
+      memory: inspected.HostConfig?.Memory ?? null,
+      nano_cpus: inspected.HostConfig?.NanoCpus ?? null,
+    },
+    networks: Object.keys(inspected.NetworkSettings?.Networks || {}).sort(),
+  };
+}
+
+function composeServiceIdentity(service) {
+  const containerId = compose(['ps', '-q', service]).stdout.trim();
+  if (!containerId) throw new Error(`CONTAINER_MISSING:${service}`);
+  return inspectContainer(containerId);
+}
+
 function waitDriver(containerId) {
   let wait;
   try {
     wait = command('docker', ['wait', containerId], { timeout: DRIVER_TIMEOUT_MS, allowFailure: true });
   } catch (error) {
     command('docker', ['kill', containerId], { allowFailure: true });
+    const identity = inspectContainer(containerId);
     command('docker', ['rm', '-f', containerId], { allowFailure: true });
-    throw new Error(`DRIVER_TIMEOUT_OR_WAIT_FAILED:${error.message}`);
+    const wrapped = new Error(`DRIVER_TIMEOUT_OR_WAIT_FAILED:${error.message}`);
+    wrapped.containerIdentity = identity;
+    throw wrapped;
   }
   if (wait.status !== 0) {
+    const identity = inspectContainer(containerId);
     command('docker', ['kill', containerId], { allowFailure: true });
     command('docker', ['rm', '-f', containerId], { allowFailure: true });
-    throw new Error(`DRIVER_WAIT_FAILED:${wait.stderr}`);
+    const wrapped = new Error(`DRIVER_WAIT_FAILED:${wait.stderr}`);
+    wrapped.containerIdentity = identity;
+    throw wrapped;
   }
   const exitCode = Number(wait.stdout.trim());
+  const identity = inspectContainer(containerId);
   const logsResult = command('docker', ['logs', containerId], { allowFailure: true });
   const logs = `${logsResult.stdout}${logsResult.stderr}`;
   command('docker', ['rm', '-f', containerId], { allowFailure: true });
-  if (exitCode !== 0) throw new Error(`DRIVER_EXIT_${exitCode}:${logs}`);
-  return logs;
+  if (exitCode !== 0) {
+    const wrapped = new Error(`DRIVER_EXIT_${exitCode}:${logs}`);
+    wrapped.containerIdentity = identity;
+    throw wrapped;
+  }
+  return { logs, identity };
+}
+
+function sourceEvidence() {
+  return {
+    head_sha: HEAD_SHA,
+    merge_sha: MERGE_SHA,
+    tree_sha: TREE_SHA,
+    workflow_run_id: process.env.GITHUB_RUN_ID || null,
+    workflow_run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+    workflow_name: process.env.GITHUB_WORKFLOW || null,
+    workflow_job: process.env.GITHUB_JOB || null,
+    repository: process.env.GITHUB_REPOSITORY || null,
+  };
 }
 
 function runRound(index) {
+  const roundStartedMs = Date.now();
+  const roundStartedAt = new Date(roundStartedMs).toISOString();
   const roundId = `r${String(index).padStart(2, '0')}-${crypto.randomBytes(5).toString('hex')}`;
   const env = {
     BOQA_REPO_ROOT: ROOT,
@@ -154,23 +220,32 @@ function runRound(index) {
   };
   const preState = assertNoResidue(`pre_round_${index}`);
   const driverEvidencePath = path.join(DRIVER_DIR, `driver-round-${roundId}.json`);
-  const finalEvidencePath = path.join(RUN_DIR, `round-${roundId}.json`);
+  const finalEvidencePath = path.join(RUN_DIR, `final-round-${roundId}.json`);
   let driverEvidence = null;
   let finalEvidence = null;
   let executionError = null;
   let cleanupError = null;
   let cleanupState = null;
   let finalizationError = null;
+  const containerIdentities = {
+    candidate: null,
+    control: null,
+    driver: null,
+  };
 
   try {
     compose(['up', '-d', '--wait', 'candidate', 'control'], { env, timeout: 240000 });
+    containerIdentities.candidate = composeServiceIdentity('candidate');
+    containerIdentities.control = composeServiceIdentity('control');
     const run = compose(['run', '-d', '--no-deps', 'driver'], { env, timeout: 60000 });
     const containerId = run.stdout.trim().split(/\s+/).pop();
     if (!/^[a-f0-9]{12,64}$/.test(containerId || '')) throw new Error(`DRIVER_ID_INVALID:${run.stdout}`);
-    waitDriver(containerId);
+    const driverResult = waitDriver(containerId);
+    containerIdentities.driver = driverResult.identity;
     driverEvidence = JSON.parse(fs.readFileSync(driverEvidencePath, 'utf8'));
     assertRoundEvidence(driverEvidence, MANIFEST);
   } catch (error) {
+    if (!containerIdentities.driver && error.containerIdentity) containerIdentities.driver = error.containerIdentity;
     executionError = error;
   } finally {
     try {
@@ -191,13 +266,24 @@ function runRound(index) {
 
     if (driverEvidence && !finalizationError) {
       try {
+        const completedMs = Date.now();
+        const driverFileSha256 = sha256(fs.readFileSync(driverEvidencePath));
         finalEvidence = finalizeRoundEvidence(driverEvidence, {
+          driverFile: path.basename(driverEvidencePath),
+          driverFileSha256,
           preState,
           cleanupState,
           cleanupVerified: !cleanupError,
           cleanupError: cleanupError ? cleanupError.message : null,
+          containerIdentities,
+          source: sourceEvidence(),
+          timing: {
+            started_at: roundStartedAt,
+            completed_at: new Date(completedMs).toISOString(),
+            duration_ms: completedMs - roundStartedMs,
+          },
         });
-        assertRoundEvidence(finalEvidence, MANIFEST);
+        assertFinalRoundEvidence(finalEvidence, MANIFEST);
         fs.writeFileSync(finalEvidencePath, `${JSON.stringify(finalEvidence, null, 2)}\n`, { flag: 'wx', mode: 0o644 });
       } catch (error) {
         finalizationError = error;
@@ -208,8 +294,23 @@ function runRound(index) {
   if (executionError) throw executionError;
   if (finalizationError) throw finalizationError;
   if (cleanupError) throw cleanupError;
-  if (!finalEvidence) throw new Error('FINAL_EVIDENCE_MISSING');
-  return { roundId, evidence: finalEvidence, preState, evidencePath: finalEvidencePath, driverEvidencePath };
+  if (!fs.existsSync(driverEvidencePath)) throw new Error(`DRIVER_EVIDENCE_MISSING:${roundId}`);
+  if (!fs.existsSync(finalEvidencePath)) throw new Error(`FINAL_EVIDENCE_MISSING:${roundId}`);
+  if (!finalEvidence) throw new Error(`FINAL_EVIDENCE_NOT_LOADED:${roundId}`);
+  return { roundId, evidence: finalEvidence, evidencePath: finalEvidencePath, driverEvidencePath };
+}
+
+function assertEvidenceFiles(rounds) {
+  const expectedRoundIds = new Set(rounds.map((round) => round.run_id));
+  const driverFiles = fs.readdirSync(DRIVER_DIR).filter((name) => /^driver-round-.+\.json$/.test(name)).sort();
+  const finalFiles = fs.readdirSync(RUN_DIR).filter((name) => /^final-round-.+\.json$/.test(name)).sort();
+  if (driverFiles.length !== ROUNDS) throw new Error(`DRIVER_EVIDENCE_COUNT_INVALID:${driverFiles.length}`);
+  if (finalFiles.length !== ROUNDS) throw new Error(`FINAL_EVIDENCE_COUNT_INVALID:${finalFiles.length}`);
+  for (const roundId of expectedRoundIds) {
+    if (!driverFiles.includes(`driver-round-${roundId}.json`)) throw new Error(`DRIVER_EVIDENCE_MISSING:${roundId}`);
+    if (!finalFiles.includes(`final-round-${roundId}.json`)) throw new Error(`FINAL_EVIDENCE_MISSING:${roundId}`);
+  }
+  return { driver_files: driverFiles, final_files: finalFiles };
 }
 
 function listFilesRecursive(directory, prefix = '') {
@@ -238,12 +339,16 @@ async function main() {
   fs.mkdirSync(RUN_DIR, { recursive: false, mode: 0o755 });
   fs.mkdirSync(DRIVER_DIR, { recursive: false, mode: 0o733 });
   fs.chmodSync(DRIVER_DIR, 0o733);
+  TREE_SHA = command('git', ['rev-parse', 'HEAD^{tree}']).stdout.trim();
+
   const gate = {
     schema_version: 1,
     qualification_green: false,
     mode: MODE,
     head_sha: HEAD_SHA,
     merge_sha: MERGE_SHA,
+    tree_sha: TREE_SHA,
+    workflow_run_id: process.env.GITHUB_RUN_ID || null,
     project: PROJECT,
     run_dir: path.relative(ROOT, RUN_DIR),
     started_at: new Date().toISOString(),
@@ -251,6 +356,11 @@ async function main() {
   };
   const gatePath = path.join(RUN_DIR, 'gate-status.json');
   const writeGate = () => fs.writeFileSync(gatePath, `${JSON.stringify(gate, null, 2)}\n`);
+
+  let failure = null;
+  let successOutput = null;
+  let checksumDigest = null;
+
   writeGate();
   try {
     assertNoResidue('initial');
@@ -268,13 +378,18 @@ async function main() {
       rounds.push(completed.evidence);
       if (index < ROUNDS) await new Promise((resolve) => setTimeout(resolve, INTERVAL_MS));
     }
+
+    const evidenceFiles = assertEvidenceFiles(rounds);
     const summary = summarizeRounds(rounds);
     if (summary.rounds_completed !== ROUNDS || summary.false_positives || summary.false_negatives || summary.cleanup_failures) {
       throw new Error(`SOAK_ASSERTION_FAILED:${JSON.stringify(summary)}`);
     }
+
     fs.writeFileSync(path.join(RUN_DIR, 'round-results.json'), `${JSON.stringify(rounds, null, 2)}\n`, { flag: 'wx' });
     fs.writeFileSync(path.join(RUN_DIR, 'soak-summary.json'), `${JSON.stringify(summary, null, 2)}\n`, { flag: 'wx' });
+    fs.writeFileSync(path.join(RUN_DIR, 'evidence-files.json'), `${JSON.stringify(evidenceFiles, null, 2)}\n`, { flag: 'wx' });
     gate.gates.round_assertions = 'PASS';
+    gate.gates.evidence_pairs = 'PASS';
     gate.gates.cleanup = 'PASS';
     gate.gates.egress = 'PASS';
 
@@ -282,7 +397,8 @@ async function main() {
       schema_version: 1,
       candidate_head_sha: HEAD_SHA,
       candidate_merge_sha: MERGE_SHA,
-      source_tree_sha: command('git', ['rev-parse', 'HEAD^{tree}']).stdout.trim(),
+      source_tree_sha: TREE_SHA,
+      workflow_run_id: process.env.GITHUB_RUN_ID || null,
       image_digest_match: true,
       config_digest_match: true,
       configured_runtime_user: oci.configured_user,
@@ -291,6 +407,7 @@ async function main() {
       runtime_egress: 'blocked',
       unauthorized_connections: 0,
       ...summary,
+      evidence_pairs_verified: true,
       evidence_integrity: 'valid',
       production_accessed: false,
       deploy_performed: false,
@@ -300,35 +417,38 @@ async function main() {
     const manifestJson = `${JSON.stringify(manifest, null, 2)}\n`;
     fs.writeFileSync(path.join(ROOT, 'docs', 'boqa-real-docker-soak-v1.json'), manifestJson);
     fs.writeFileSync(path.join(RUN_DIR, 'qualification-manifest.json'), manifestJson, { flag: 'wx' });
-    gate.qualification_green = true;
-    gate.completed_at = new Date().toISOString();
-    gate.gates.final = 'PASS';
-    writeGate();
-    const sha256sumsDigest = writeChecksums();
-    process.stdout.write(`${JSON.stringify({ status: 'PASS', summary, run_dir: gate.run_dir, sha256sums_digest: sha256sumsDigest })}\n`);
+    successOutput = { summary, run_dir: gate.run_dir };
   } catch (error) {
-    gate.qualification_green = false;
-    gate.completed_at = new Date().toISOString();
-    gate.failure = error.stack || error.message;
-    gate.gates.final = 'FAIL';
-    writeGate();
-    if (!fs.existsSync(path.join(RUN_DIR, 'SHA256SUMS'))) {
-      try {
-        gate.failure_artifact_sha256sums = writeChecksums();
-        writeGate();
-      } catch (checksumError) {
-        gate.checksum_error = checksumError.message;
-        writeGate();
-      }
-    }
-    throw error;
+    failure = error;
   } finally {
     try {
       cleanup();
+    } catch (error) {
+      gate.final_cleanup_error = error.message;
+      if (!failure) failure = error;
+    }
+
+    gate.qualification_green = !failure;
+    gate.completed_at = new Date().toISOString();
+    gate.gates.final = failure ? 'FAIL' : 'PASS';
+    if (failure) gate.failure = failure.stack || failure.message;
+    writeGate();
+
+    try {
+      checksumDigest = writeChecksums();
+    } catch (error) {
+      gate.qualification_green = false;
+      gate.gates.final = 'FAIL';
+      gate.checksum_error = error.stack || error.message;
+      if (!failure) failure = error;
+      writeGate();
     } finally {
       releaseLock();
     }
   }
+
+  if (failure) throw failure;
+  process.stdout.write(`${JSON.stringify({ status: 'PASS', ...successOutput, sha256sums_digest: checksumDigest })}\n`);
 }
 
 if (require.main === module) {
@@ -339,8 +459,10 @@ if (require.main === module) {
 }
 
 module.exports = {
+  assertEvidenceFiles,
   assertNoResidue,
   command,
+  inspectContainer,
   inventory,
   verifyCompose,
   verifyDockerAndImage,
