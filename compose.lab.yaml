@@ -1,0 +1,77 @@
+services:
+  candidate:
+    image: bkimminich/juice-shop@sha256:67b87bff95f5719f9a31ab2bcf48cacc30fcc30d4662c2047ca0c0b8b4b7ebae
+    user: "1000:1000"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 0.75
+    restart: "no"
+    tmpfs:
+      - /tmp:size=64m,uid=1000,gid=1000,mode=1770,noexec,nosuid,nodev
+      - /juice-shop/data:size=64m,uid=1000,gid=1000,mode=1770,nosuid,nodev
+      - /juice-shop/logs:size=16m,uid=1000,gid=1000,mode=1770,nosuid,nodev
+    networks:
+      boqa_lab_internal:
+        aliases: ["boqa-lab-juice-shop"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/',r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 20s
+
+  control:
+    image: node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+    user: "1000:1000"
+    command: ["node", "/workspace/qualification/labs/juice-shop-v1/control-server.js"]
+    working_dir: /workspace
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 96m
+    cpus: 0.25
+    restart: "no"
+    tmpfs:
+      - /tmp:size=16m,uid=1000,gid=1000,mode=1770,noexec,nosuid,nodev
+    volumes:
+      - ${BOQA_REPO_ROOT:-.}:/workspace:ro
+    networks:
+      boqa_lab_internal:
+        aliases: ["boqa-lab-control"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3001/health',r=>{r.resume();process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  driver:
+    image: node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+    user: "1000:1000"
+    command: ["node", "/workspace/scripts/soak-driver.js"]
+    working_dir: /workspace
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    restart: "no"
+    tmpfs:
+      - /tmp:size=16m,uid=1000,gid=1000,mode=1770,noexec,nosuid,nodev
+    environment:
+      BOQA_LAB_IMAGE_DIGEST: sha256:67b87bff95f5719f9a31ab2bcf48cacc30fcc30d4662c2047ca0c0b8b4b7ebae
+      BOQA_ROUND_ID: ${BOQA_ROUND_ID:?BOQA_ROUND_ID is required}
+      BOQA_EVIDENCE_DIR: /evidence
+    volumes:
+      - ${BOQA_REPO_ROOT:-.}:/workspace:ro
+      - ${BOQA_EVIDENCE_DIR:?BOQA_EVIDENCE_DIR is required}:/evidence
+    networks:
+      - boqa_lab_internal
+
+networks:
+  boqa_lab_internal:
+    internal: true
