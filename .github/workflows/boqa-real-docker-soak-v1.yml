@@ -2,34 +2,22 @@ name: BOQA Real Docker Soak V1
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - feat/boqa-local-lab-runtime-v1
-    paths:
-      - .github/soak-bootstrap-v1
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
-  group: boqa-full-soak-${{ github.event.pull_request.number || github.ref }}
+  group: boqa-full-soak-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   soak:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.pull_request.head.repo.full_name == github.repository &&
-        github.head_ref == 'feat/boqa-real-docker-soak-v1'
-      )
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       CI: 'true'
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
-      BOQA_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      BOQA_HEAD_SHA: ${{ github.sha }}
       BOQA_MERGE_SHA: ${{ github.sha }}
       BOQA_GATE_DIR: ${{ github.workspace }}/output/soak/workflow-full
       SOAK_MODE: full
@@ -39,7 +27,7 @@ jobs:
       - name: Checkout exact commit
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Setup Node.js 20
@@ -135,7 +123,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: boqa-real-docker-soak-${{ github.event.pull_request.head.sha || github.sha }}
+          name: boqa-real-docker-soak-${{ github.sha }}
           path: |
             output/soak/
             docs/boqa-real-docker-soak-v1.json
