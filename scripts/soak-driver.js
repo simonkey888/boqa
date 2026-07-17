@@ -4,11 +4,13 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const { LocalLabRuntime } = require('../lib/local-lab-runtime');
-const { assertRoundEvidence, sha256 } = require('../lib/soak-qualification-helpers');
+const { assertRoundEvidence, computeEvidenceSha256 } = require('../lib/soak-qualification-helpers');
 
 const manifest = require('../qualification/labs/juice-shop-v1/manifest.json');
 const evidenceDir = process.env.BOQA_EVIDENCE_DIR || '/evidence';
 const runId = process.env.BOQA_ROUND_ID;
+const DNS_BLOCK_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EAI_FAIL', 'EAI_NODATA']);
+const CONNECT_BLOCK_CODES = new Set(['ENETUNREACH', 'EHOSTUNREACH', 'ECONNREFUSED', 'ECONNRESET']);
 
 function probeHttp(host, timeoutMs = 1500) {
   return new Promise((resolve) => {
@@ -21,8 +23,11 @@ function probeHttp(host, timeoutMs = 1500) {
       resolve({ classification: 'BLOCKED_TIMEOUT' });
     });
     req.on('error', (error) => {
-      const classification = error.code === 'ENOTFOUND' ? 'BLOCKED_DNS' : 'BLOCKED_CONNECT';
-      resolve({ classification, code: error.code || 'ERROR' });
+      const code = error.code || 'ERROR';
+      let classification = 'ERROR';
+      if (DNS_BLOCK_CODES.has(code)) classification = 'BLOCKED_DNS';
+      else if (CONNECT_BLOCK_CODES.has(code)) classification = 'BLOCKED_CONNECT';
+      resolve({ classification, code });
     });
   });
 }
@@ -39,10 +44,10 @@ async function main() {
     metadata: await probeHttp('169.254.169.254'),
     documentation_ip: await probeHttp('192.0.2.1'),
   };
-  evidence.evidence_sha256 = sha256(JSON.stringify(evidence));
+  evidence.evidence_sha256 = computeEvidenceSha256(evidence);
   assertRoundEvidence(evidence, manifest);
-  const output = path.join(evidenceDir, `round-${runId}.json`);
-  fs.writeFileSync(output, `${JSON.stringify(evidence, null, 2)}\n`, { flag: 'wx' });
+  const output = path.join(evidenceDir, `driver-round-${runId}.json`);
+  fs.writeFileSync(output, `${JSON.stringify(evidence, null, 2)}\n`, { flag: 'wx', mode: 0o644 });
   process.stdout.write(`${JSON.stringify({ status: 'PASS', output, evidence_sha256: evidence.evidence_sha256 })}\n`);
 }
 
