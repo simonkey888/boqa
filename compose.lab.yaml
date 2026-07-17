@@ -17,6 +17,7 @@ services:
       - candidate_ftp:/juice-shop/ftp
       - candidate_frontend:/juice-shop/frontend/dist
       - candidate_i18n:/juice-shop/i18n
+      - candidate_well_known:/juice-shop/.well-known
     networks:
       boqa_lab_internal:
         aliases: ["boqa-lab-juice-shop"]
@@ -86,3 +87,4 @@ volumes:
   candidate_ftp:
   candidate_frontend:
   candidate_i18n:
+  candidate_well_known:
