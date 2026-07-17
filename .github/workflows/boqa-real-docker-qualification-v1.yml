@@ -23,7 +23,6 @@ jobs:
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
       BOQA_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       BOQA_MERGE_SHA: ${{ github.sha }}
-      BOQA_TREE_SHA: ${{ github.event.pull_request.head.sha }}
       SOAK_MODE: short
       SOAK_INTERVAL_MS: '1000'
 
@@ -68,13 +67,17 @@ jobs:
           node scripts/gate-status.js focused_tests PASS
 
       - name: Full regression suite
+        id: full_suite
+        continue-on-error: true
         run: |
           set -Eeuo pipefail
+          mkdir -p output/soak/workflow
           trap 'node scripts/gate-status.js full_suite FAIL' ERR
-          npm run test
+          npm run test 2>&1 | tee output/soak/workflow/full-suite.log
           node scripts/gate-status.js full_suite PASS
 
       - name: Diff integrity
+        id: diff_integrity
         run: |
           set -Eeuo pipefail
           trap 'node scripts/gate-status.js diff_check FAIL' ERR
@@ -82,19 +85,24 @@ jobs:
           node scripts/gate-status.js diff_check PASS
 
       - name: Real isolated Docker qualification
+        id: docker_qualification
+        continue-on-error: true
         run: |
           set -Eeuo pipefail
+          mkdir -p output/soak/workflow
           trap 'node scripts/gate-status.js docker_qualification FAIL' ERR
-          node scripts/soak-test.js
+          node scripts/soak-test.js 2>&1 | tee output/soak/workflow/docker-qualification.log
           node scripts/gate-status.js docker_qualification PASS
 
-      - name: Final workflow gate
-        if: success()
-        run: node scripts/gate-status.js workflow PASS
-
-      - name: Record workflow failure
-        if: failure()
-        run: node scripts/gate-status.js workflow FAIL
+      - name: Enforce final workflow gate
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          if [ "${{ steps.full_suite.outcome }}" != "success" ] || [ "${{ steps.diff_integrity.outcome }}" != "success" ] || [ "${{ steps.docker_qualification.outcome }}" != "success" ]; then
+            node scripts/gate-status.js workflow FAIL
+            exit 1
+          fi
+          node scripts/gate-status.js workflow PASS
 
       - name: Upload qualification evidence
         if: always()
