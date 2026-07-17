@@ -11,8 +11,12 @@ services:
     restart: "no"
     tmpfs:
       - /tmp:size=64m,uid=65532,gid=65532,mode=1770,noexec,nosuid,nodev
-      - /juice-shop/data:size=64m,uid=65532,gid=65532,mode=1770,nosuid,nodev
-      - /juice-shop/logs:size=16m,uid=65532,gid=65532,mode=1770,nosuid,nodev
+    volumes:
+      - candidate_data:/juice-shop/data
+      - candidate_logs:/juice-shop/logs
+      - candidate_ftp:/juice-shop/ftp
+      - candidate_frontend:/juice-shop/frontend/dist
+      - candidate_i18n:/juice-shop/i18n
     networks:
       boqa_lab_internal:
         aliases: ["boqa-lab-juice-shop"]
@@ -75,3 +79,10 @@ services:
 networks:
   boqa_lab_internal:
     internal: true
+
+volumes:
+  candidate_data:
+  candidate_logs:
+  candidate_ftp:
+  candidate_frontend:
+  candidate_i18n:
