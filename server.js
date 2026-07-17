@@ -1,104 +1,102 @@
-/**
- * BOQA server.js — Thin bootstrap (Phase 3 modular refactor)
- *
- * This file was refactored from a ~3700-line monolith into a thin
- * orchestrator that wires together modules from lib/ and routes/.
- *
- * Original behavior is 100% preserved — same routes, same shutdown,
- * same event wiring, same degraded-mode behavior.
- */
+'use strict';
 
 const express = require('express');
 const http = require('http');
-const { WebSocketServer } = require('ws');
 const path = require('path');
+const { WebSocketServer } = require('ws');
 const { createBillingAuth } = require('./lib/billing-auth');
 const { DefensiveValidationService } = require('./lib/defensive-validation');
-
-// ─── Config ─────────────────────────────────────────────────────────────
-
-const { CONFIG, OUTPUT_DIR, SESSIONS_DIR, REPORTS_DIR } = require('./lib/config');
-
-// ─── Middleware ──────────────────────────────────────────────────────────
-
-const { createRequireAgent, errorHandler, requireApiKey, rateLimiter, verifyHmac, attachRawBodyCapture } = require('./lib/middleware');
-
-// ─── Engine Initialization ──────────────────────────────────────────────
-
+const { HunterRuntime } = require('./lib/hunter-runtime');
+const { CONFIG, OUTPUT_DIR } = require('./lib/config');
+const {
+  createRequireAgent,
+  errorHandler,
+  requireApiKey,
+  rateLimiter,
+  verifyHmac,
+  attachRawBodyCapture,
+} = require('./lib/middleware');
 const { initialize } = require('./lib/init');
+
 const ctx = initialize(CONFIG, OUTPUT_DIR);
 ctx.defensiveValidation = new DefensiveValidationService();
-ctx.defensiveValidation.start();
+
+function provideHunterPolicy() {
+  try {
+    const assets = ctx.defensiveValidation.loadAssets();
+    const authorizedAssets = assets.filter((asset) => ctx.defensiveValidation.authorize(asset).allowed);
+    if (authorizedAssets.length === 0) {
+      return { status: 'BLOCKED', reason: 'NO_AUTHORIZED_ASSETS', authorized_assets: [] };
+    }
+    return { status: 'READY', authorized_assets: authorizedAssets };
+  } catch (error) {
+    return { status: 'BLOCKED', reason: error.code || error.message || 'INVALID_POLICY', authorized_assets: [] };
+  }
+}
+
+ctx.hunterRuntime = new HunterRuntime({
+  cycleRunner: () => ctx.defensiveValidation.runCycle(),
+  policyProvider: provideHunterPolicy,
+  statePath: path.join(OUTPUT_DIR, 'hunter-state.json'),
+  lockPath: path.join(OUTPUT_DIR, 'hunter-runtime.lock'),
+});
+
 const billingAuth = createBillingAuth();
-
-// Create agent-aware middleware now that ctx exists
 const requireAgent = createRequireAgent(() => ctx.agent, () => ctx.agentInitError);
-
-// ─── Express + HTTP + WS ───────────────────────────────────────────────
-
 const app = express();
-// Capture raw body via express.json({ verify }) hook — this is the correct
-// way to get the exact bytes received without breaking body parsing.
-// attachRawBodyCapture() returns a config object with a verify callback that
-// stashes the raw buffer on req._rawBody for HMAC verification later.
-app.use(express.json(attachRawBodyCapture()));
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use(express.json(attachRawBodyCapture({ limit: process.env.BOQA_JSON_LIMIT || '256kb' })));
+
 const server = http.createServer(app);
 app.get('/cobros', (_req, res) => {
   res.set('Cache-Control', 'no-store');
+  res.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
   res.sendFile(path.join(__dirname, 'dashboard', 'cobros.html'));
 });
 app.use(express.static(path.join(__dirname, 'dashboard')));
 
-app.get('/api/defensive/status', (_req, res) => res.json(ctx.defensiveValidation.publicStatus()));
+app.get('/api/defensive/status', (_req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(ctx.hunterRuntime.publicStatus());
+});
 app.post('/api/private/billing/auth', billingAuth.authenticate);
-app.get('/api/private/billing/session', billingAuth.requireSession, (req, res) => res.json({ authenticated: true, csrf_token: req.billingSession.csrf, expires_at: new Date(req.billingSession.expiresAt).toISOString() }));
+app.get('/api/private/billing/session', billingAuth.requireSession, (req, res) => res.json({
+  authenticated: true,
+  csrf_token: req.billingSession.csrf,
+  expires_at: new Date(req.billingSession.expiresAt).toISOString(),
+}));
 app.get('/api/private/billing/data', billingAuth.requireSession, (_req, res) => res.json({ movements: [], summary: null }));
 app.post('/api/private/billing/logout', billingAuth.requireSession, billingAuth.requireCsrf, billingAuth.logout);
 
-// ─── Pipelines ──────────────────────────────────────────────────────────
-
 const pipelines = require('./lib/pipelines');
-
-// ─── WS Server (must create after bus for correct reference) ───────
-
 const wss = new WebSocketServer({ server, path: '/ws' });
 ctx.bus.wsServer = wss;
-
-// Store references needed by shutdown
 ctx.wss = wss;
 ctx.server = server;
 
-// ─── URGENT-5: Global API Auth Middleware ──────────────────────────────
-// Apply verifyHmac + rateLimiter + requireApiKey to ALL /api routes.
-// Whitelist: /health, /replay/health, /runtime/metrics (diagnostic endpoints)
-//
-// HMAC verification runs FIRST — if BOQA_HMAC_SECRET is set, requests
-// without valid X-BOQA-Sig + X-BOQA-Ts headers are rejected before
-// any other middleware runs. This protects even if rateLimiter/requireApiKey
-// are disabled (defense in depth).
-const AUTH_WHITELIST = new Set(['/health', '/replay/health', '/runtime/metrics']);
+const PUBLIC_READ_PATHS = new Set([
+  '/health',
+  '/replay/health',
+  '/runtime/metrics',
+  '/defensive/status',
+  '/hunter/status',
+]);
 
 app.use('/api', (req, res, next) => {
-  if (req.path === '/defensive/status' || req.path.startsWith('/private/billing/')) return next();
-  // Skip auth for whitelisted diagnostic paths (they have their own protection)
-  const apiPath = req.path; // path relative to /api mount point
-  if (AUTH_WHITELIST.has(apiPath)) {
-    return next();
-  }
-  // HMAC first (no-op if BOQA_HMAC_SECRET unset), then rate limiter, then API key
-  verifyHmac(req, res, (err) => {
-    if (err) return next(err);
-    rateLimiter(req, res, (err2) => {
-      if (err2) return next(err2);
+  if (req.path.startsWith('/private/billing/')) return next();
+  if (req.method === 'GET' && PUBLIC_READ_PATHS.has(req.path)) return next();
+  verifyHmac(req, res, (hmacError) => {
+    if (hmacError) return next(hmacError);
+    rateLimiter(req, res, (rateError) => {
+      if (rateError) return next(rateError);
       requireApiKey(req, res, next);
     });
   });
 });
 
-// ─── Register API Routes ────────────────────────────────────────────────
-
 const middleware = { requireAgent, requireApiKey, rateLimiter };
-
+require('./routes/hunter-v1').registerRoutes(app, ctx);
 require('./routes/quality-v1').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v01').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v08').registerRoutes(app, ctx, middleware, pipelines);
@@ -108,121 +106,97 @@ require('./routes/v12').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v13').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v14').registerRoutes(app, ctx, middleware, pipelines);
 require('./routes/v15').registerRoutes(app, ctx, middleware, pipelines);
-
-// STRUCT-6: S6 Pipeline API routes
 require('./routes/s6').registerRoutes(app, ctx, middleware, pipelines);
-
-// ─── Event Wiring ──────────────────────────────────────────────────────
 
 const { wireEventHandlers } = require('./lib/event-wiring');
 wireEventHandlers(ctx, pipelines);
 
-// ─── Stats Logging ─────────────────────────────────────────────────────
-
 let lastCount = 0;
-setInterval(() => {
+const statsTimer = setInterval(() => {
   const stats = ctx.bus.getStats();
   if (stats.totalEvents !== lastCount) {
     lastCount = stats.totalEvents;
-    const top = Object.entries(stats.byType).sort((a, b) => b[1] - a[1]).slice(0, 4).map(([t, c]) => `${t.split('_')[0]}=${c}`).join(' ');
+    const top = Object.entries(stats.byType)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([type, count]) => `${type.split('_')[0]}=${count}`)
+      .join(' ');
     const anomalyCount = ctx.agent ? ctx.agent.anomaly.getAnomalies().length : 0;
-    const findingCount = ctx.lastFindings.length;
-    const bugCount = ctx.lastConfirmedBugs.length;
-    console.log(`[Stats] ${stats.totalEvents} events | ${top} | anomalies=${anomalyCount} | findings=${findingCount} | bugs=${bugCount} | ${stats.clients} dash`);
+    console.log(`[Stats] ${stats.totalEvents} events | ${top} | anomalies=${anomalyCount} | findings=${ctx.lastFindings.length} | bugs=${ctx.lastConfirmedBugs.length} | ${stats.clients} dash`);
   }
-}, 10000);
-
-// ─── Auto-Analysis ─────────────────────────────────────────────────────
+}, 10_000);
+statsTimer.unref?.();
 
 if (CONFIG.autoAnalyze && CONFIG.analyzeInterval > 0) {
-  setInterval(() => {
-    if (ctx.bus.eventLog.length > 10) {
-      try {
-        pipelines.runAnalysisPipeline(ctx);
-      } catch (err) {
-        console.warn(`[Auto-Analyze] Error: ${err.message}`);
-      }
+  const analysisTimer = setInterval(() => {
+    if (ctx.bus.eventLog.length <= 10) return;
+    try {
+      pipelines.runAnalysisPipeline(ctx);
+    } catch (error) {
+      console.warn(`[Auto-Analyze] Error: ${error.message}`);
     }
   }, CONFIG.analyzeInterval * 1000);
+  analysisTimer.unref?.();
 }
-
-// ─── Duration Timer ────────────────────────────────────────────────────
-
-if (CONFIG.duration > 0) {
-  setTimeout(() => {
-    console.log(`[Server] Duration limit reached (${CONFIG.duration}s) — shutting down`);
-    shutdown('DURATION_LIMIT');
-  }, CONFIG.duration * 1000);
-}
-
-// ─── Shutdown Pipeline ─────────────────────────────────────────────────
 
 const { createShutdown } = require('./lib/shutdown');
-const shutdown = createShutdown(ctx, pipelines);
+const legacyShutdown = createShutdown(ctx, pipelines);
+let shutdownPromise = null;
+function shutdown(signal) {
+  if (shutdownPromise) return shutdownPromise;
+  shutdownPromise = (async () => {
+    if (ctx.hunterRuntime) await ctx.hunterRuntime.stop(signal);
+    return legacyShutdown(signal);
+  })();
+  return shutdownPromise;
+}
 
-process.on('SIGINT', () => shutdown('SIGINT'));
-process.on('SIGTERM', () => shutdown('SIGTERM'));
+if (CONFIG.duration > 0) {
+  const durationTimer = setTimeout(() => {
+    console.log(`[Server] Duration limit reached (${CONFIG.duration}s) — shutting down`);
+    void shutdown('DURATION_LIMIT');
+  }, CONFIG.duration * 1000);
+  durationTimer.unref?.();
+}
 
-// URGENT-1: SIGHUP handler — survive background execution (nohup, Docker, systemd)
-process.on('SIGHUP', () => {
-  console.log('[Server] SIGHUP received — ignoring (background execution mode)');
-});
-
-// P3: Global error handler — must be registered after all routes
+process.on('SIGINT', () => void shutdown('SIGINT'));
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGHUP', () => console.log('[Server] SIGHUP received — ignoring (background execution mode)'));
 app.use(errorHandler);
 
-// ─── Boot ──────────────────────────────────────────────────────────────
-
 async function main() {
-  const modeLabel = {
-    live: 'Live Observe',
-    baseline: 'Baseline Build',
-    compare: 'Compare',
-  }[CONFIG.mode] || CONFIG.mode;
+  const modeLabel = { live: 'Live Observe', baseline: 'Baseline Build', compare: 'Compare' }[CONFIG.mode] || CONFIG.mode;
+  console.log(`\n[BOQA] mode=${modeLabel} target=${CONFIG.target || 'none (fail-closed)'} session=${ctx.bus.sessionId.substring(0, 8)}`);
 
-  console.log();
-  console.log('  ╔═══════════════════════════════════════════════════════════════╗');
-  console.log('  ║   BOQA — Browser Observability & QA Agent v1.4               ║');
-  console.log('  ║   Autonomous Decision Kernel                                  ║');
-  console.log('  ╠═══════════════════════════════════════════════════════════════╣');
-  console.log(`  ║  Mode:      ${modeLabel.padEnd(49)}║`);
-  console.log(`  ║  Target:    ${(CONFIG.target || 'none (fail-closed)').padEnd(49)}║`);
-  console.log(`  ║  Session:   ${ctx.bus.sessionId.substring(0, 8).padEnd(49)}║`);
-  console.log(`  ║  Dashboard: http://localhost:${String(CONFIG.port).padEnd(38)}║`);
-  console.log(`  ║  Analyze:   every ${String(CONFIG.analyzeInterval + 's').padEnd(41)}║`);
-  if (ctx.baselineObj) {
-    console.log(`  ║  Baseline:  ${ctx.baselineObj.id.padEnd(49)}║`);
-  }
-  console.log('  ╚═══════════════════════════════════════════════════════════════╝');
-  console.log();
-
-  // Start HTTP
   server.listen(CONFIG.port, '0.0.0.0', () => {
     console.log(`[Server] Dashboard: http://localhost:${CONFIG.port}`);
   });
 
-  // Start Agent (skip if init failed — degraded mode)
+  const hunter = await ctx.hunterRuntime.start();
+  console.log(`[Hunter] state=${hunter.state} reason=${hunter.reason || 'none'} last_cycle=${hunter.last_completed_at || 'none'}`);
+
   if (ctx.agent) {
     try {
       await ctx.agent.start();
       console.log(`[Server] Agent active — mode: ${CONFIG.mode}`);
-    } catch (e) {
-      ctx.agentStartError = e.message || String(e);
-      console.error('[Server] Agent failed:', e.message);
-      console.error('[Server] Server remains up — v0.9 APIs and dashboard available');
+    } catch (error) {
+      ctx.agentStartError = error.message || String(error);
+      console.error('[Server] Agent failed:', error.message);
+      console.error('[Server] Server remains up in degraded browser-agent mode');
     }
   } else {
-    console.warn(`[Server] Agent not initialized — running in degraded mode. Error: ${ctx.agentInitError || 'unknown'}`);
-    console.warn('[Server] Agent-dependent endpoints will return 503; other APIs remain functional.');
+    console.warn(`[Server] Agent not initialized — degraded mode: ${ctx.agentInitError || 'unknown'}`);
   }
 
-  // P5: Start runtime monitor for production observability
   if (ctx.runtimeMonitor) {
     ctx.runtimeMonitor.start();
-    const agentRunning = ctx.agent ? (!('page' in ctx.agent) || !!ctx.agent.page) : false;
+    const agentRunning = ctx.agent ? (!('page' in ctx.agent) || Boolean(ctx.agent.page)) : false;
     ctx.runtimeMonitor.recordHealth(agentRunning ? 'ok' : 'degraded');
     console.log('[Server] Runtime monitor active');
   }
 }
 
-main();
+main().catch((error) => {
+  console.error('[Server] Fatal bootstrap error:', error.message);
+  void shutdown('BOOTSTRAP_ERROR');
+});
