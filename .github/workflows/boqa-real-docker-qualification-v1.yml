@@ -102,20 +102,28 @@ jobs:
           STATE=missing
           HEALTH=missing
           if [ -n "$CID" ]; then
-            for _ in $(seq 1 30); do
+            for _ in $(seq 1 90); do
               STATE=$(docker inspect -f '{{.State.Status}}' "$CID" 2>/dev/null || echo missing)
               HEALTH=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CID" 2>/dev/null || echo missing)
               [ "$HEALTH" = healthy ] && break
+              [ "$HEALTH" = unhealthy ] && break
               [ "$STATE" = exited ] && break
               sleep 2
             done
           fi
           "${COMPOSE[@]}" ps -a >output/soak/workflow/candidate-startup-ps.log 2>&1 || true
           "${COMPOSE[@]}" logs --no-color candidate >output/soak/workflow/candidate-startup.log 2>&1 || true
+          if [ -n "$CID" ]; then
+            docker inspect -f '{{json .State.Health}}' "$CID" >output/soak/workflow/candidate-startup-health.json 2>/dev/null || printf 'null\n' >output/soak/workflow/candidate-startup-health.json
+          else
+            printf 'null\n' >output/soak/workflow/candidate-startup-health.json
+          fi
           printf '{"up_status":%s,"container_id":"%s","state":"%s","health":"%s"}\n' "$UP_STATUS" "$CID" "$STATE" "$HEALTH" >output/soak/workflow/candidate-startup-status.json
           "${COMPOSE[@]}" down -v --remove-orphans --timeout 10 >>output/soak/workflow/candidate-startup-command.log 2>&1 || true
           if [ "$UP_STATUS" -ne 0 ] || [ "$STATE" != running ] || [ "$HEALTH" != healthy ]; then
             node scripts/gate-status.js candidate_startup FAIL
+            cat output/soak/workflow/candidate-startup-status.json
+            cat output/soak/workflow/candidate-startup-health.json
             cat output/soak/workflow/candidate-startup.log
             exit 1
           fi
