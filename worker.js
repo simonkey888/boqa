@@ -118,7 +118,7 @@ async function proxyToBackend(request, env) {
 function secureAssetResponse(assetResponse, pathname) {
   const headers = new Headers(assetResponse.headers);
   const isMutableAsset = pathname === '/' || pathname.endsWith('.html') || pathname.endsWith('.js') || pathname.endsWith('.css');
-  const isPrivateAsset = pathname === '/cobros' || pathname === '/cobros.js' || pathname === '/private.css';
+  const isPrivateAsset = pathname === '/cobros' || pathname === '/cobros.html' || pathname === '/cobros.js' || pathname === '/private.css';
   if (isMutableAsset || isPrivateAsset) {
     headers.set('Cache-Control', 'no-store, max-age=0');
     headers.set('Pragma', 'no-cache');
@@ -126,7 +126,13 @@ function secureAssetResponse(assetResponse, pathname) {
   }
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'no-referrer');
-  if (isPrivateAsset) headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  if (isPrivateAsset) {
+    headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    headers.set('Content-Security-Policy', "default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+    headers.set('Cross-Origin-Resource-Policy', 'same-origin');
+    headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  }
   return new Response(assetResponse.body, {
     status: assetResponse.status,
     statusText: assetResponse.statusText,

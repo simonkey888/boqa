@@ -4,7 +4,7 @@ const express = require('express');
 const http = require('http');
 const path = require('path');
 const { WebSocketServer } = require('ws');
-const { createBillingAuth } = require('./lib/billing-auth');
+const { createBillingAuth, setPrivateHeaders } = require('./lib/billing-auth');
 const { DefensiveValidationService } = require('./lib/defensive-validation');
 const { HunterRuntime } = require('./lib/hunter-runtime');
 const { CONFIG, OUTPUT_DIR } = require('./lib/config');
@@ -12,6 +12,7 @@ const {
   createRequireAgent,
   errorHandler,
   requireApiKey,
+  requireStrongProxyAuth,
   rateLimiter,
   verifyHmac,
   attachRawBodyCapture,
@@ -48,11 +49,28 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 app.use(express.json(attachRawBodyCapture({ limit: process.env.BOQA_JSON_LIMIT || '256kb' })));
 
+function setPrivatePageHeaders(res, contentType) {
+  setPrivateHeaders(res);
+  res.set('Content-Security-Policy', "default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+  res.set('Cross-Origin-Opener-Policy', 'same-origin');
+  res.set('Cross-Origin-Resource-Policy', 'same-origin');
+  res.set('Referrer-Policy', 'no-referrer');
+  res.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  if (contentType) res.type(contentType);
+}
+
 const server = http.createServer(app);
-app.get('/cobros', (_req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+app.get(['/cobros', '/cobros.html'], (_req, res) => {
+  setPrivatePageHeaders(res, 'html');
   res.sendFile(path.join(__dirname, 'dashboard', 'cobros.html'));
+});
+app.get('/cobros.js', (_req, res) => {
+  setPrivatePageHeaders(res, 'application/javascript');
+  res.sendFile(path.join(__dirname, 'dashboard', 'cobros.js'));
+});
+app.get('/private.css', (_req, res) => {
+  setPrivatePageHeaders(res, 'text/css');
+  res.sendFile(path.join(__dirname, 'dashboard', 'private.css'));
 });
 app.use(express.static(path.join(__dirname, 'dashboard')));
 
@@ -60,14 +78,23 @@ app.get('/api/defensive/status', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(ctx.hunterRuntime.publicStatus());
 });
+
+app.use('/api/private/billing', requireStrongProxyAuth, rateLimiter);
 app.post('/api/private/billing/auth', billingAuth.authenticate);
 app.get('/api/private/billing/session', billingAuth.requireSession, (req, res) => res.json({
   authenticated: true,
   csrf_token: req.billingSession.csrf,
   expires_at: new Date(req.billingSession.expiresAt).toISOString(),
 }));
-app.get('/api/private/billing/data', billingAuth.requireSession, (_req, res) => res.json({ movements: [], summary: null }));
-app.post('/api/private/billing/logout', billingAuth.requireSession, billingAuth.requireCsrf, billingAuth.logout);
+app.get('/api/private/billing/data', billingAuth.requireSession, (_req, res) => res.json({
+  schema_version: 1,
+  view: {
+    title: 'Centro de Cobros',
+    empty_message: 'No hay datos privados disponibles.',
+  },
+  sections: [],
+}));
+app.post('/api/private/billing/logout', billingAuth.logout);
 
 const pipelines = require('./lib/pipelines');
 const wss = new WebSocketServer({ server, path: '/ws' });
