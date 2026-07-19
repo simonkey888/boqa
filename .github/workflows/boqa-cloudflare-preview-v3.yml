@@ -212,7 +212,8 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const base = process.env.PREVIEW_URL;
-          const required = [['/',[200]],['/health',[200]],['/api/health',[200]],['/api/defensive/status',[200]],['/api/hunter/status',[200,404]]];
+          const required = [['/',[200]],['/health',[200]],['/api/health',[200]],['/api/defensive/status',[200,404]],['/api/hunter/status',[200,404]]];
+          const transitionalRoutes = new Set(['/api/defensive/status', '/api/hunter/status']);
           (async () => {
             const rows = [];
             const failures = [];
@@ -223,14 +224,15 @@ jobs:
                 status: response.status,
                 allowed,
                 cache_control: response.headers.get('cache-control'),
-                contract_mode: route === '/api/hunter/status' && response.status === 404 ? 'legacy_backend_expected' : 'compatible',
+                contract_mode: transitionalRoutes.has(route) && response.status === 404 ? 'legacy_backend_expected' : 'compatible',
               });
               if (!allowed.includes(response.status)) failures.push(`${route}:${response.status}`);
             }
-            const hunter = rows.find((row) => row.route === '/api/hunter/status');
+            const transitional = rows.filter((row) => transitionalRoutes.has(row.route));
+            const legacyPending = transitional.some((row) => row.status === 404);
             fs.writeFileSync('output/cloudflare-preview-v3/http-contracts.json', JSON.stringify({
               rows,
-              backend_contract: hunter.status === 200 ? 'compatible' : 'legacy_pending_backend_deploy',
+              backend_contract: legacyPending ? 'legacy_pending_backend_deploy' : 'compatible',
             }, null, 2));
             if (failures.length) throw new Error(failures.join(','));
           })().catch((error) => { console.error(error); process.exit(1); });
