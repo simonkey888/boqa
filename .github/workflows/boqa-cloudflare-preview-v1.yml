@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - deploy/boqa-cloudflare-preview-v1
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 permissions:
   contents: read
