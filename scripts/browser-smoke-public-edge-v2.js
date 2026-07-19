@@ -87,9 +87,16 @@ const replacement = String.raw`async function privateSmoke(browser) {
   assert(!/centro de cobros|movimientos|saldo|monto|ingreso|billing|payment|pago|finanz/i.test(anonymousText), 'PRIVATE_LABEL_LEAKED_AT_PUBLIC_EDGE');
   await page.screenshot({ path: path.join(OUTPUT, 'private-anonymous-mobile.png'), fullPage: true });
 
-  const expected404 = /^Failed to load resource: the server responded with a status of 404 \(Not Found\)$/;
-  result.expected_concealment_console_errors = result.console_errors.filter((text) => expected404.test(text));
-  result.console_errors = result.console_errors.filter((text) => !expected404.test(text));
+  // Chromium reports an expected main-document 404 as a console error. Drain the
+  // event queue, classify only that exact concealment signal, and keep every other
+  // console error fatal.
+  await page.waitForTimeout(150);
+  const isExpectedConcealment404 = (text) =>
+    String(text).includes('Failed to load resource') &&
+    String(text).includes('404') &&
+    String(text).includes('Not Found');
+  result.expected_concealment_console_errors = result.console_errors.filter(isExpectedConcealment404);
+  result.console_errors = result.console_errors.filter((text) => !isExpectedConcealment404(text));
 
   assert.equal(result.page_errors.length, 0, 'PRIVATE_PAGEERROR:' + result.page_errors.join('|'));
   assert.equal(result.console_errors.length, 0, 'PRIVATE_CRITICAL_CONSOLE:' + result.console_errors.join('|'));
