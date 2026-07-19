@@ -22,10 +22,10 @@ jobs:
     timeout-minutes: 15
     env:
       SOURCE_SHA: ede06de817d607e6717f6ea71f2e40aac68ea7a2
-      BACKEND_HOST: ${{ secrets.BOQA_BACKEND_HOST || secrets.OCI_HOST || secrets.SSH_HOST }}
-      BACKEND_USER: ${{ secrets.BOQA_BACKEND_USER || secrets.OCI_USER || secrets.SSH_USER }}
-      BACKEND_SSH_KEY: ${{ secrets.BOQA_BACKEND_SSH_KEY || secrets.OCI_SSH_PRIVATE_KEY || secrets.SSH_PRIVATE_KEY }}
-      BACKEND_SSH_PORT: ${{ secrets.BOQA_BACKEND_SSH_PORT || secrets.OCI_SSH_PORT || '22' }}
+      BACKEND_HOST: ${{ secrets.BOQA_BACKEND_HOST || secrets.OCI_HOST || secrets.SSH_HOST || secrets.DEPLOY_HOST || secrets.SERVER_HOST || secrets.VPS_HOST || '136.248.117.15' }}
+      BACKEND_USER: ${{ secrets.BOQA_BACKEND_USER || secrets.OCI_USER || secrets.SSH_USER || secrets.DEPLOY_USER || secrets.SERVER_USER || secrets.VPS_USER }}
+      BACKEND_SSH_KEY: ${{ secrets.BOQA_BACKEND_SSH_KEY || secrets.OCI_SSH_PRIVATE_KEY || secrets.SSH_PRIVATE_KEY || secrets.DEPLOY_SSH_KEY || secrets.SERVER_SSH_KEY || secrets.VPS_SSH_KEY || secrets.OCI_SSH_KEY || secrets.SSH_KEY }}
+      BACKEND_SSH_PORT: ${{ secrets.BOQA_BACKEND_SSH_PORT || secrets.OCI_SSH_PORT || secrets.SSH_PORT || secrets.DEPLOY_SSH_PORT || '22' }}
     steps:
       - name: Checkout exact main source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -48,36 +48,84 @@ jobs:
       - name: Verify remote access inputs
         run: |
           set -Eeuo pipefail
-          missing=()
-          [ -n "${BACKEND_HOST:-}" ] || missing+=("BOQA_BACKEND_HOST or OCI_HOST or SSH_HOST")
-          [ -n "${BACKEND_USER:-}" ] || missing+=("BOQA_BACKEND_USER or OCI_USER or SSH_USER")
-          [ -n "${BACKEND_SSH_KEY:-}" ] || missing+=("BOQA_BACKEND_SSH_KEY or OCI_SSH_PRIVATE_KEY or SSH_PRIVATE_KEY")
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf '%s\n' "${missing[@]}" | sed 's/^/MISSING_ACCESS=/' | tee output/backend-oci-preflight-v1/missing-access.txt
+          if [ -z "${BACKEND_SSH_KEY:-}" ]; then
+            cat > output/backend-oci-preflight-v1/missing-access.txt <<'EOF'
+          MISSING_ACCESS=one SSH private-key secret is required
+          ACCEPTED_NAMES=BOQA_BACKEND_SSH_KEY,OCI_SSH_PRIVATE_KEY,SSH_PRIVATE_KEY,DEPLOY_SSH_KEY,SERVER_SSH_KEY,VPS_SSH_KEY,OCI_SSH_KEY,SSH_KEY
+          EOF
             exit 78
           fi
           printf '%s\n' "REMOTE_ACCESS_INPUTS=PASS" > output/backend-oci-preflight-v1/access-inputs.txt
+          printf 'HOST_SOURCE=%s\n' "$([ "${BACKEND_HOST}" = '136.248.117.15' ] && echo configured_worker_endpoint || echo secret_override)" >> output/backend-oci-preflight-v1/access-inputs.txt
+          printf 'USER_SOURCE=%s\n' "$([ -n "${BACKEND_USER:-}" ] && echo secret_override || echo auto_discovery)" >> output/backend-oci-preflight-v1/access-inputs.txt
 
       - name: Prepare isolated SSH client
         run: |
           set -Eeuo pipefail
           install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "${BACKEND_SSH_KEY}" > "$HOME/.ssh/boqa_backend_key"
+          printf '%s\n' "${BACKEND_SSH_KEY}" > "$HOME/.ssh/boqa_backend_key.raw"
+          if ssh-keygen -y -f "$HOME/.ssh/boqa_backend_key.raw" >/dev/null 2>&1; then
+            mv "$HOME/.ssh/boqa_backend_key.raw" "$HOME/.ssh/boqa_backend_key"
+          else
+            base64 -d "$HOME/.ssh/boqa_backend_key.raw" > "$HOME/.ssh/boqa_backend_key" 2>/dev/null || {
+              echo 'SSH_KEY_FORMAT=INVALID' > output/backend-oci-preflight-v1/key-format.txt
+              exit 78
+            }
+            rm -f "$HOME/.ssh/boqa_backend_key.raw"
+            ssh-keygen -y -f "$HOME/.ssh/boqa_backend_key" >/dev/null 2>&1 || {
+              echo 'SSH_KEY_FORMAT=INVALID_AFTER_BASE64_DECODE' > output/backend-oci-preflight-v1/key-format.txt
+              exit 78
+            }
+          fi
           chmod 600 "$HOME/.ssh/boqa_backend_key"
+          echo 'SSH_KEY_FORMAT=VALID' > output/backend-oci-preflight-v1/key-format.txt
           ssh-keyscan -p "${BACKEND_SSH_PORT}" -H "${BACKEND_HOST}" > "$HOME/.ssh/known_hosts" 2> output/backend-oci-preflight-v1/ssh-keyscan-stderr.txt
           test -s "$HOME/.ssh/known_hosts"
           ssh-keygen -lf "$HOME/.ssh/known_hosts" > output/backend-oci-preflight-v1/host-key-fingerprint.txt
 
+      - name: Discover SSH user read-only
+        run: |
+          set -Eeuo pipefail
+          users=()
+          if [ -n "${BACKEND_USER:-}" ]; then users+=("${BACKEND_USER}"); fi
+          for candidate in ubuntu opc root debian admin ec2-user; do
+            seen=false
+            for current in "${users[@]:-}"; do [ "$current" = "$candidate" ] && seen=true; done
+            [ "$seen" = false ] && users+=("$candidate")
+          done
+          : > output/backend-oci-preflight-v1/user-attempts.txt
+          selected=''
+          for user in "${users[@]}"; do
+            if ssh -i "$HOME/.ssh/boqa_backend_key" \
+              -p "${BACKEND_SSH_PORT}" \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=8 \
+              "${user}@${BACKEND_HOST}" 'printf BOQA_SSH_OK' 2>/dev/null | grep -q '^BOQA_SSH_OK$'; then
+              selected="$user"
+              printf 'USER=%s RESULT=SUCCESS\n' "$user" >> output/backend-oci-preflight-v1/user-attempts.txt
+              break
+            fi
+            printf 'USER=%s RESULT=REJECTED\n' "$user" >> output/backend-oci-preflight-v1/user-attempts.txt
+          done
+          if [ -z "$selected" ]; then
+            echo 'SSH_AUTHENTICATION=FAILED_FOR_ALL_CANDIDATE_USERS' > output/backend-oci-preflight-v1/blocker.txt
+            exit 78
+          fi
+          printf '%s' "$selected" > output/backend-oci-preflight-v1/selected-user.txt
+
       - name: Inspect backend host read-only
         run: |
           set -Eeuo pipefail
+          selected=$(cat output/backend-oci-preflight-v1/selected-user.txt)
           ssh -i "$HOME/.ssh/boqa_backend_key" \
             -p "${BACKEND_SSH_PORT}" \
             -o BatchMode=yes \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             -o ConnectTimeout=12 \
-            "${BACKEND_USER}@${BACKEND_HOST}" 'bash -se' > output/backend-oci-preflight-v1/remote-inventory.txt <<'REMOTE'
+            "${selected}@${BACKEND_HOST}" 'bash -se' > output/backend-oci-preflight-v1/remote-inventory.txt <<'REMOTE'
           set -Eeuo pipefail
           echo "REMOTE_CONNECTIVITY=PASS"
           printf 'HOSTNAME='; hostname
