@@ -1,0 +1,230 @@
+name: BOQA Cloudflare Preview Preflight V1
+
+on:
+  push:
+    branches:
+      - deploy/boqa-cloudflare-preview-v1
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-cloudflare-preview-v1
+  cancel-in-progress: false
+
+jobs:
+  preview-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      SOURCE_SHA: 6c25738f1c90a0d2a475ed063577214978c0a365
+      WORKER_NAME: boqa
+      PREVIEW_ALIAS: boqa-next
+      PREVIEW_URL: https://boqa-next-boqa.simondalmasso44.workers.dev
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 6c25738f1c90a0d2a475ed063577214978c0a365
+          persist-credentials: false
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Initialize redacted evidence
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/cloudflare-preview
+          cat > output/cloudflare-preview/preflight.json <<EOF
+          {
+            "source_sha": "${SOURCE_SHA}",
+            "worker": "${WORKER_NAME}",
+            "preview_alias": "${PREVIEW_ALIAS}",
+            "production_traffic_changed": false,
+            "production_deployment_performed": false
+          }
+          EOF
+
+      - name: Require Cloudflare access
+        run: |
+          set -Eeuo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "MISSING_ACCESS=CLOUDFLARE_API_TOKEN"
+            echo "CONFIGURE_AT=GitHub repository simonkey888/boqa -> Settings -> Secrets and variables -> Actions -> Repository secrets"
+            exit 78
+          fi
+          npx --yes wrangler@4.112.0 whoami > output/cloudflare-preview/whoami.txt
+
+      - name: Verify Worker secret names
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.112.0 secret list --name "${WORKER_NAME}" --format json > output/cloudflare-preview/secret-names.json
+          node <<'NODE'
+          const fs = require('fs');
+          const raw = JSON.parse(fs.readFileSync('output/cloudflare-preview/secret-names.json', 'utf8'));
+          const rows = Array.isArray(raw) ? raw : (raw.secrets || []);
+          const names = new Set(rows.map((row) => typeof row === 'string' ? row : row.name).filter(Boolean));
+          const required = ['BOQA_API_KEY', 'BOQA_HMAC_SECRET'];
+          const missing = required.filter((name) => !names.has(name));
+          fs.writeFileSync('output/cloudflare-preview/secret-name-audit.json', JSON.stringify({required, present: required.filter((name) => names.has(name)), missing}, null, 2));
+          if (missing.length) {
+            for (const name of missing) console.error(`MISSING_SECRET=${name}`);
+            console.error('CONFIGURE_AT=Cloudflare Dashboard -> Workers & Pages -> boqa -> Settings -> Variables and Secrets');
+            process.exit(78);
+          }
+          NODE
+
+      - name: Record active version and rollback point
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.112.0 deployments list --name "${WORKER_NAME}" --json > output/cloudflare-preview/deployments-before.json
+          npx --yes wrangler@4.112.0 versions list --name "${WORKER_NAME}" --json > output/cloudflare-preview/versions-before.json
+
+      - name: Compile exact release source
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.112.0 versions upload --dry-run --outdir output/cloudflare-preview/dry-run --keep-vars
+
+      - name: Upload preview version only
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.112.0 versions upload \
+            --preview-alias "${PREVIEW_ALIAS}" \
+            --keep-vars \
+            --tag "main-${SOURCE_SHA:0:12}" \
+            --message "BOQA preview from exact main ${SOURCE_SHA}; no production traffic" \
+            2>&1 | tee output/cloudflare-preview/version-upload.log
+          npx --yes wrangler@4.112.0 versions list --name "${WORKER_NAME}" --json > output/cloudflare-preview/versions-after.json
+
+      - name: Wait for preview endpoint
+        run: |
+          set -Eeuo pipefail
+          for attempt in $(seq 1 20); do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' "${PREVIEW_URL}/" || true)
+            if [ "${status}" = "200" ]; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "PREVIEW_ENDPOINT_UNAVAILABLE=${PREVIEW_URL}"
+          exit 1
+
+      - name: Install browser dependencies
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Audit preview desktop and mobile
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const { chromium } = require('playwright');
+          const base = process.env.PREVIEW_URL;
+          const out = 'output/cloudflare-preview';
+          const viewports = [
+            { name: 'desktop-1440', width: 1440, height: 900 },
+            { name: 'mobile-390', width: 390, height: 844 },
+            { name: 'mobile-360', width: 360, height: 800 },
+          ];
+          (async () => {
+            const browser = await chromium.launch({ headless: true });
+            const results = [];
+            try {
+              for (const viewport of viewports) {
+                const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } });
+                const page = await context.newPage();
+                const pageErrors = [];
+                const consoleErrors = [];
+                page.on('pageerror', (error) => pageErrors.push(String(error)));
+                page.on('console', (message) => {
+                  if (message.type() === 'error') consoleErrors.push(message.text());
+                });
+                const response = await page.goto(`${base}/`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                await page.waitForTimeout(3500);
+                const state = await page.evaluate(() => ({
+                  title: document.title,
+                  textLength: document.body.innerText.trim().length,
+                  heroVisible: Boolean(document.querySelector('#hero-title')),
+                  horizontalOverflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+                  bodyWidth: document.body.getBoundingClientRect().width,
+                  viewportWidth: window.innerWidth,
+                }));
+                await page.screenshot({ path: `${out}/${viewport.name}.png`, fullPage: true });
+                results.push({ viewport, httpStatus: response ? response.status() : null, ...state, pageErrors, consoleErrors });
+                await context.close();
+              }
+              const cobros = await browser.newPage({ viewport: { width: 390, height: 844 } });
+              const cobrosResponse = await cobros.goto(`${base}/cobros`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+              await cobros.waitForTimeout(1000);
+              await cobros.screenshot({ path: `${out}/cobros-anonymous-mobile.png`, fullPage: true });
+              const summary = {
+                source_sha: process.env.SOURCE_SHA,
+                preview_url: base,
+                production_traffic_changed: false,
+                production_deployment_performed: false,
+                viewports: results,
+                cobros_http_status: cobrosResponse ? cobrosResponse.status() : null,
+              };
+              fs.writeFileSync(`${out}/browser-preview-evidence.json`, JSON.stringify(summary, null, 2));
+              const failures = results.flatMap((result) => {
+                const errors = [];
+                if (result.httpStatus !== 200) errors.push(`${result.viewport.name}:http_${result.httpStatus}`);
+                if (!result.heroVisible || result.textLength < 100) errors.push(`${result.viewport.name}:content_not_visible`);
+                if (result.horizontalOverflow !== 0) errors.push(`${result.viewport.name}:overflow_${result.horizontalOverflow}`);
+                if (result.pageErrors.length) errors.push(`${result.viewport.name}:pageerror_${result.pageErrors.length}`);
+                return errors;
+              });
+              if (failures.length) {
+                console.error(failures.join('\n'));
+                process.exitCode = 1;
+              }
+            } finally {
+              await browser.close();
+            }
+          })().catch((error) => { console.error(error); process.exit(1); });
+          NODE
+
+      - name: Record HTTP contracts without credentials
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const base = process.env.PREVIEW_URL;
+          (async () => {
+            const paths = ['/', '/health', '/api/health', '/api/hunter/status', '/api/defensive/status', '/api/private/billing/data'];
+            const records = [];
+            for (const path of paths) {
+              try {
+                const response = await fetch(base + path, { redirect: 'manual' });
+                records.push({ path, status: response.status, cacheControl: response.headers.get('cache-control'), contentType: response.headers.get('content-type') });
+              } catch (error) {
+                records.push({ path, error: error.name });
+              }
+            }
+            fs.writeFileSync('output/cloudflare-preview/http-contracts.json', JSON.stringify(records, null, 2));
+          })().catch((error) => { console.error(error); process.exit(1); });
+          NODE
+
+      - name: Verify evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/cloudflare-preview
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload redacted preview evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-preview-${{ env.SOURCE_SHA }}
+          path: output/cloudflare-preview/
+          if-no-files-found: error
+          retention-days: 14
