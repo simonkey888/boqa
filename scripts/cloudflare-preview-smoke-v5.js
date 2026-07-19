@@ -10,7 +10,7 @@ const OUTPUT = path.join(ROOT, 'output', 'cloudflare-preview-v5', 'browser');
 const PREVIEW_URL = String(process.env.BOQA_PREVIEW_URL || '').replace(/\/$/, '');
 const HEAD_SHA = process.env.BOQA_HEAD_SHA || process.env.GITHUB_SHA || 'unknown';
 
-if (!/^https:\/\/[a-z0-9-]+\.workers\.dev$/i.test(PREVIEW_URL)) {
+if (!/^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)+\.workers\.dev$/i.test(PREVIEW_URL)) {
   throw new Error('INVALID_OR_MISSING_PREVIEW_URL');
 }
 
