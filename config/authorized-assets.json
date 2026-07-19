@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "validation_mode": "DEFENSIVE_VALIDATION",
+  "assets": [
+    {
+      "id": "boqa-local-fixture",
+      "type": "fixture_local",
+      "ownership_status": "verified",
+      "authorization_status": "verified",
+      "scope_status": "in_scope",
+      "environment_type": "owned_or_lab",
+      "validation_mode": "non_destructive",
+      "checks": ["availability", "configuration", "schema", "isolation"]
+    }
+  ]
+}

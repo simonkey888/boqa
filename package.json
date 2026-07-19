@@ -4,6 +4,7 @@
   "description": "Browser Observability & QA Agent — autonomous decision kernel with bounded execution authority",
   "main": "server.js",
   "scripts": {
+    "test": "node scripts/run-all-tests.js",
     "start": "node server.js",
     "live": "node server.js --mode=live",
     "baseline": "node server.js --mode=baseline",
@@ -30,7 +31,9 @@
     "uncertainty": "curl http://localhost:7070/api/uncertainty",
     "counterfactual": "curl http://localhost:7070/api/counterfactual",
     "stability": "curl http://localhost:7070/api/stability",
-    "alignment": "curl http://localhost:7070/api/alignment"
+    "alignment": "curl http://localhost:7070/api/alignment",
+    "test:dashboard": "node test/test-dashboard-smoke.js",
+    "test:defensive": "node test/test-defensive-private.js && node test/test-public-private-boundary.js"
   },
   "keywords": [
     "observability",
@@ -59,4 +62,3 @@
     "ws": "^8.16.0"
   }
 }
-

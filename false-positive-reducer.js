@@ -119,9 +119,38 @@ class FalsePositiveReducer {
       this._validations.set(candidate.id, validation);
 
       // Step 4: Classify based on consistency
+      // FASE 4 — Calibration:
+      //   3/3 reproductions consistent → confirmed
+      //   2/3 consistent              → confirmed with confidence penalty
+      //   1/3                         → needs_review
+      //   0/3                         → rejected (false_positive)
+      //   No detector + no replay     → needs_review (inconclusive, NEVER confirmed)
+      //   Technical error             → needs_review
       const consistentObservations = validation.rounds.filter(r => r.observed).length;
+      const inconclusiveRounds     = validation.rounds.filter(r => r.inconclusive).length;
+      const totalRounds            = this.validationRounds;
 
-      if (consistentObservations >= this.confirmationThreshold) {
+      // If ALL rounds were inconclusive (no detector, no replay), NEVER confirm
+      const allInconclusive = inconclusiveRounds === totalRounds && consistentObservations === 0;
+
+      let classification;
+      if (allInconclusive) {
+        classification = 'needs_review';
+      } else if (consistentObservations >= totalRounds) {
+        // 3/3
+        classification = 'confirmed';
+      } else if (consistentObservations === 2 && totalRounds === 3) {
+        // 2/3 → confirmed with confidence penalty
+        classification = 'confirmed';
+        candidate.initial_confidence = Math.max(0, (candidate.initial_confidence || 0) - 10);
+      } else if (consistentObservations === 1) {
+        classification = 'needs_review';
+      } else {
+        // 0/3
+        classification = 'false_positive';
+      }
+
+      if (classification === 'confirmed') {
         confirmed.push({
           ...candidate,
           validation_state: VALIDATION_STATES.CONFIRMED,
@@ -129,19 +158,23 @@ class FalsePositiveReducer {
           _repeatCount: consistentObservations,
         });
         this._stats.confirmed++;
-      } else if (consistentObservations <= this.fpThreshold) {
+      } else if (classification === 'false_positive') {
         false_positives.push({
           ...candidate,
           validation_state: VALIDATION_STATES.FALSE_POSITIVE,
-          fp_reason: `Not reproducible across ${this.validationRounds} rounds (observed ${consistentObservations}/${this.validationRounds})`,
+          fp_reason: `Not reproducible across ${totalRounds} rounds (observed ${consistentObservations}/${totalRounds})`,
           _validation: validation,
         });
         this._stats.false_positives++;
       } else {
+        // needs_review (covers 1/3, all-inconclusive, technical errors)
+        const reviewReason = allInconclusive
+          ? 'Inconclusive: no independent detector or replay confirmation available'
+          : `Inconsistent observations (${consistentObservations}/${totalRounds} rounds)`;
         needs_review.push({
           ...candidate,
           validation_state: VALIDATION_STATES.NEEDS_REVIEW,
-          review_reason: `Inconsistent observations (${consistentObservations}/${this.validationRounds} rounds)`,
+          review_reason: reviewReason,
           _validation: validation,
           _repeatCount: consistentObservations,
         });
@@ -201,19 +234,42 @@ class FalsePositiveReducer {
             roundResult.confidence_delta = matchingCandidate.initial_confidence - candidate.initial_confidence;
           }
         } else {
-          // Without detector: single-round "optimistic" validation
-          // If we have replay confirmation, trust it
+          // FASE 4 — FAIL-CLOSED: Without an independent detector OR verified
+          // replay confirmation, we CANNOT claim the bug was reproduced.
+          // Previous behavior (marking observed=true) was an optimistic
+          // fallback that converted absence of evidence into confirmation.
+          //
+          // New behavior: round is inconclusive (observed=false), and the
+          // overall candidate will be classified as needs_review (never
+          // confirmed) by the calling reducer logic.
           if (this.replayConfirmation) {
-            const confirmation = this.replayConfirmation.getConfirmation(candidate.id);
-            roundResult.observed = confirmation && confirmation.state === 'confirmed';
+            try {
+              const confirmation = this.replayConfirmation.getConfirmation(candidate.id);
+              roundResult.observed = !!(confirmation && confirmation.state === 'confirmed');
+              if (!roundResult.observed) {
+                roundResult.inconclusive = true;
+                roundResult.details = { reason: 'Replay confirmation did not return confirmed state' };
+              }
+            } catch (replayErr) {
+              roundResult.observed = false;
+              roundResult.inconclusive = true;
+              roundResult.details = { reason: 'Replay confirmation threw error', error: replayErr.message };
+            }
           } else {
-            // Cannot re-validate — mark as observed (single observation)
-            roundResult.observed = true;
+            // No detector AND no replay confirmation → cannot re-validate.
+            // FAIL CLOSED: do NOT mark as observed.
+            roundResult.observed = false;
+            roundResult.inconclusive = true;
+            roundResult.details = {
+              reason: 'No independent detector or replay confirmation available',
+            };
           }
         }
       } catch (err) {
+        // Technical error during validation round → also fail closed.
         roundResult.observed = false;
-        roundResult.details = { error: err.message };
+        roundResult.inconclusive = true;
+        roundResult.details = { reason: 'Validation round threw error', error: err.message };
       }
 
       roundResult.completed_at = Date.now();

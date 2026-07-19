@@ -5,7 +5,7 @@
  *  - PRODUCTION: BOQA_BACKEND_URL is set → all /api/* and /ws requests are
  *    proxied to the Node.js backend (Northflank, Render, etc.)
  *  - DEMO: BOQA_BACKEND_URL is unset → the Worker itself validates X-API-Key
- *    against BOQA_API_KEY (default "BOQA123") and returns mock data so the
+ *    against the BOQA_API_KEY secret binding and returns mock data so the
  *    dashboard is fully browsable without a backend.
  *
  * HMAC signing (defense in depth):
@@ -49,8 +49,6 @@ async function computeHmacSignature(secret, method, path, ts, bodyStr) {
 }
 
 // ─── Demo data (used when BOQA_BACKEND_URL is unset) ────────────────────
-
-const DEMO_API_KEY = 'BOQA123';
 
 const DEMO_BUGS = [
   {
@@ -210,9 +208,9 @@ function demoJsonEvidence(bugId) {
 // ─── Auth check (demo mode) ─────────────────────────────────────────────
 
 function isAuthorized(request, env) {
-  const expectedKey = (env && env.BOQA_API_KEY) || DEMO_API_KEY;
+  const expectedKey = env && env.BOQA_API_KEY;
   const provided = request.headers.get('X-API-Key') || new URL(request.url).searchParams.get('api_key');
-  return provided === expectedKey;
+  return !!expectedKey && provided === expectedKey;
 }
 
 function unauthorizedResponse() {
@@ -233,6 +231,14 @@ function unauthorizedResponse() {
 function handleDemoApi(request, env) {
   const url = new URL(request.url);
 
+  // Fail closed when no backend is configured. Never present demo findings as
+  // operational results and never expose private data from the edge.
+  if (url.pathname === '/api/health') return new Response(JSON.stringify({ status: 'degraded', backend_configured: false }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  if (url.pathname === '/api/defensive/status') return new Response(JSON.stringify({ mode: 'DEFENSIVE_VALIDATION', engine_status: 'BLOCKED_BY_POLICY', scheduler_status: 'WAITING_FOR_AUTHORIZED_ASSET', authorized_assets: null, controls_completed: null, validated_findings: null, reportable_findings: null, activity: [], evidence: [] }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  if (url.pathname === '/api/bugs') return new Response(JSON.stringify({ bugs: [], summary: {} }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+  return new Response(JSON.stringify({ error: 'backend_unavailable' }), { status: 503, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+
+  /* istanbul ignore next -- legacy demo implementation is unreachable */
   if (!isAuthorized(request, env)) {
     return unauthorizedResponse();
   }
@@ -351,19 +357,22 @@ async function proxyToBackend(request, env) {
 
   // ─── API key forwarding ─────────────────────────────────────────────
   // If the backend has BOQA_API_KEY set, every request MUST include the
-  // matching X-API-Key header. The Worker sends it from its own env var
-  // (or defaults to BOQA123 for backward compat with the demo key).
-  // If the backend has BOQA_API_KEY unset (open mode), this header is ignored.
-  const workerApiKey = env.BOQA_API_KEY || 'BOQA123';
-  if (!proxyHeaders.has('X-API-Key')) {
-    proxyHeaders.set('X-API-Key', workerApiKey);
+  // matching X-API-Key header. The Worker always overwrites any browser value
+  // with its own secret binding and fails closed when secrets are missing.
+  const workerApiKey = env.BOQA_API_KEY;
+  const hmacSecret = env.BOQA_HMAC_SECRET;
+  if (!workerApiKey || !hmacSecret) {
+    return new Response(JSON.stringify({ error: 'worker_auth_not_configured' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
+  proxyHeaders.set('X-API-Key', workerApiKey);
 
   // ─── HMAC signing (defense in depth) ────────────────────────────────
   // If BOQA_HMAC_SECRET is set on the Worker, sign every proxied request.
   // The backend will reject any request without a valid signature, even if
   // someone bypasses Cloudflare and hits the VPS IP directly.
-  const hmacSecret = env.BOQA_HMAC_SECRET;
   let bodyForProxy = request.method !== 'GET' && request.method !== 'HEAD' ? request.body : undefined;
 
   if (hmacSecret) {
@@ -451,6 +460,12 @@ export default {
 
     // /api/* → demo mode OR proxy
     if (url.pathname.startsWith('/api/')) {
+      const publicReadPaths = new Set(['/api/health', '/api/runtime/metrics', '/api/defensive/status', '/api/bugs']);
+      const isPublicRead = request.method === 'GET' && publicReadPaths.has(url.pathname);
+      const isPrivateBilling = url.pathname.startsWith('/api/private/billing/');
+      if (!isPublicRead && !isPrivateBilling) {
+        return new Response(JSON.stringify({ error: 'not_found' }), { status: 404, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+      }
       if (backendConfigured) {
         return proxyToBackend(request, env);
       }
@@ -481,7 +496,6 @@ export default {
           time: new Date().toISOString(),
           mode: backendConfigured ? 'production' : 'demo',
           backend_configured: backendConfigured,
-          default_api_key: 'BOQA123',
         }),
         {
           status: 200,
@@ -498,7 +512,8 @@ export default {
       const isHtml = url.pathname === '/' || url.pathname.endsWith('.html');
       const isJs = url.pathname.endsWith('.js');
       const isCss = url.pathname.endsWith('.css');
-      if (isHtml || isJs || isCss) {
+      const isPrivateAsset = url.pathname === '/cobros' || url.pathname === '/cobros.js' || url.pathname === '/private.css';
+      if (isHtml || isJs || isCss || isPrivateAsset) {
         const headers = new Headers(assetRes.headers);
         headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
         headers.set('Pragma', 'no-cache');
