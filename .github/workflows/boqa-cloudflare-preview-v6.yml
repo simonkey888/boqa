@@ -1,0 +1,80 @@
+name: BOQA Cloudflare Exact Preview V6
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: boqa-cloudflare-preview-v6-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exact-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CI: 'true'
+      WORKER_NAME: boqa
+      BOQA_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      BOQA_HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Build exact preview without traffic
+        run: bash scripts/cloudflare-preview-build-v6.sh
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Classify and smoke exact preview
+        run: node scripts/cloudflare-preview-smoke-v6.js
+
+      - name: Verify evidence and promotion policy
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          out=output/cloudflare-preview-v6
+          test -f "$out/browser/preview-smoke-evidence.json"
+          jq -e '
+            .gate_status == "PASS" and
+            .production_changed == false and
+            .deploy_performed == false and
+            (
+              (.classification == "PROMOTION_READY" and .promotion_ready == true) or
+              (.classification == "BLOCKED_BACKEND_CONTRACT" and .promotion_ready == false and .blocker == "BACKEND_HUNTER_CONTRACT_MISSING")
+            )
+          ' "$out/browser/preview-smoke-evidence.json" >/dev/null
+          cmp "$out/deployment-before.json" "$out/deployment-after.json"
+          cd "$out"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload exact preview evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-preview-v6-${{ github.event.pull_request.head.sha }}
+          path: output/cloudflare-preview-v6/
+          if-no-files-found: error
+          retention-days: 14
