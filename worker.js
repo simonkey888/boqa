@@ -38,12 +38,21 @@ function failClosedApi(pathname) {
 
 function normalizePathname(pathname) {
   let decoded = String(pathname || '/');
-  try {
-    decoded = decodeURIComponent(decoded);
-  } catch (_) {
-    // Malformed encodings remain untrusted and are compared in their raw form.
+  for (let pass = 0; pass < 3; pass += 1) {
+    let next;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch (_) {
+      // Malformed encodings remain untrusted and are compared in their raw form.
+      break;
+    }
+    if (next === decoded) break;
+    decoded = next;
   }
-  return decoded.replace(/\/{2,}/g, '/').toLowerCase();
+  return decoded
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/')
+    .toLowerCase();
 }
 
 function isPrivateSurface(pathname) {
