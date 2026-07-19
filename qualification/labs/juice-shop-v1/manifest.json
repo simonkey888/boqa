@@ -8,11 +8,24 @@
   "upstream_version": "19.1.1",
   "upstream_revision": "c8c407d503ce9c8e6582b39b40db84db06989744",
   "license": "MIT",
-  "runtime_user_verification": "unverified",
-  "runtime_user_compensations": ["internal_network", "cap_drop_all", "no_new_privileges", "read_only_root", "bounded_tmpfs", "resource_limits", "zero_mounts"],
-  "clean_state_basis": "read_only_get_only_scenario_without_authentication_or_cookies",
-  "scenario_family": "INERT_REFLECTION_VALIDATION",
-  "allowed_origins": ["http://boqa-lab-juice-shop:3000", "http://boqa-lab-control:3001"],
+  "runtime_user_verification": "candidate_uid_65532_control_driver_uid_1000",
+  "runtime_user_compensations": [
+    "internal_network",
+    "cap_drop_all",
+    "no_new_privileges",
+    "read_only_root",
+    "bounded_tmpfs",
+    "resource_limits",
+    "zero_host_ports",
+    "zero_docker_socket"
+  ],
+  "clean_state_basis": "fresh_compose_project_per_run_read_only_get_only_no_auth_no_cookies",
+  "scenario_family": "INERT_DIFFERENTIAL_SEARCH_VALIDATION",
+  "probe_query": "apple",
+  "allowed_origins": [
+    "http://boqa-lab-juice-shop:3000",
+    "http://boqa-lab-control:3001"
+  ],
   "request_budget_per_scenario": 6,
   "timeout_ms": 20000,
   "max_redirects": 0

@@ -1,2 +1,55 @@
 'use strict';
-const {spawnSync}=require('child_process');const probe=spawnSync('docker',['compose','version'],{encoding:'utf8'});if(probe.status!==0){console.log('Docker unavailable: NOT RUN');process.exit(2)}const check=spawnSync('docker',['compose','--profile','lab','config','--quiet'],{encoding:'utf8'});if(check.status!==0){console.error(check.stderr);process.exit(1)}console.log('local lab docker config: PASS');
+
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { spawnSync } = require('child_process');
+const { assertComposePolicy } = require('../lib/soak-qualification-helpers');
+const manifest = require('../qualification/labs/juice-shop-v1/manifest.json');
+
+const root = path.resolve(__dirname, '..');
+const probe = spawnSync('docker', ['compose', 'version'], { encoding: 'utf8' });
+if (probe.status !== 0) {
+  console.log('Docker unavailable: SKIP (real Docker remains mandatory in qualification workflow)');
+  process.exit(0);
+}
+
+const evidenceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'boqa-compose-config-'));
+const configured = spawnSync('docker', [
+  'compose',
+  '-f',
+  path.join(root, 'compose.lab.yaml'),
+  'config',
+  '--format',
+  'json',
+], {
+  cwd: root,
+  encoding: 'utf8',
+  env: {
+    ...process.env,
+    BOQA_REPO_ROOT: root,
+    BOQA_EVIDENCE_DIR: evidenceDir,
+    BOQA_ROUND_ID: 'config-validation',
+  },
+});
+
+try {
+  assert.equal(configured.status, 0, configured.stderr || configured.stdout);
+  const model = JSON.parse(configured.stdout);
+  assertComposePolicy(model);
+  assert.equal(
+    model.services.candidate.image,
+    manifest.image_reference,
+    'candidate image reference must retain the exact pinned Juice Shop manifest digest',
+  );
+  assert.equal(model.services.candidate.user, '65532:65532');
+  assert.deepEqual(
+    model.services.candidate.healthcheck?.test?.slice(0, 2),
+    ['CMD', '/nodejs/bin/node'],
+    'Juice Shop uses a distroless Node image; healthcheck must invoke its absolute runtime path',
+  );
+  console.log('local lab docker config: PASS');
+} finally {
+  fs.rmSync(evidenceDir, { recursive: true, force: true });
+}
