@@ -1,0 +1,167 @@
+name: BOQA Cloudflare Preview Final
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-cloudflare-preview-final
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.head_ref == 'deploy/boqa-cloudflare-preview-final'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      CI: "true"
+      SOURCE_SHA: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+      WORKER_NAME: boqa
+      PREVIEW_ALIAS: boqa-next
+      PREVIEW_URL: https://boqa-next-boqa.simondalmasso44.workers.dev
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      OUT: output/cloudflare-preview-final
+    steps:
+      - name: Checkout control branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: deploy/boqa-cloudflare-preview-final
+          path: control
+          persist-credentials: false
+
+      - name: Checkout exact release source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+          path: release
+          persist-credentials: false
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: release/package-lock.json
+
+      - name: Verify source identity and initialize evidence
+        working-directory: release
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test -z "$(git status --porcelain)"
+          mkdir -p "${OUT}"
+          printf '{"source_sha":"%s","production_traffic_changed":false,"production_deployment_performed":false,"rollback_executed":false}\n' "${SOURCE_SHA}" > "${OUT}/manifest.json"
+
+      - name: Verify effective Worker access and secret names
+        working-directory: release
+        run: |
+          set -Eeuo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo MISSING_ACCESS=CLOUDFLARE_API_TOKEN; exit 78; }
+          npx --yes wrangler@4.112.0 secret list --name "${WORKER_NAME}" --format json > "${OUT}/secret-names-raw.json"
+          node <<'NODE'
+          const fs = require('fs');
+          const out = process.env.OUT;
+          const path = `${out}/secret-names-raw.json`;
+          const raw = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const rows = Array.isArray(raw) ? raw : (raw.secrets || []);
+          const names = new Set(rows.map((row) => typeof row === 'string' ? row : row.name).filter(Boolean));
+          const required = ['BOQA_API_KEY', 'BOQA_HMAC_SECRET'];
+          const missing = required.filter((name) => !names.has(name));
+          fs.writeFileSync(`${out}/secret-audit.json`, JSON.stringify({
+            cloudflare_worker_access: 'PASS',
+            account_source: 'wrangler.toml',
+            required,
+            present: required.filter((name) => names.has(name)),
+            missing,
+            optional_dashboard_password_present: names.has('DASHBOARD_PASSWORD'),
+            dashboard_password_consumed_by_current_worker: false
+          }, null, 2));
+          fs.rmSync(path);
+          if (missing.length) {
+            missing.forEach((name) => console.error(`MISSING_SECRET=${name}`));
+            process.exit(78);
+          }
+          NODE
+
+      - name: Record production rollback point
+        working-directory: release
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.112.0 deployments list --name "${WORKER_NAME}" --json > "${OUT}/deployments-before.json"
+          npx --yes wrangler@4.112.0 versions list --name "${WORKER_NAME}" --json > "${OUT}/versions-before.json"
+
+      - name: Validate exact source and bundle
+        working-directory: release
+        run: |
+          set -Eeuo pipefail
+          npm ci
+          npm test
+          node test/test-dashboard-smoke.js
+          npx --yes wrangler@4.112.0 versions upload --dry-run --outdir "${OUT}/dry-run" --keep-vars
+
+      - name: Upload preview version only
+        working-directory: release
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.112.0 versions upload \
+            --preview-alias "${PREVIEW_ALIAS}" \
+            --keep-vars \
+            --tag "main-${SOURCE_SHA:0:12}" \
+            --message "BOQA preview exact main ${SOURCE_SHA}; no production traffic" \
+            2>&1 | tee "${OUT}/version-upload.log"
+          npx --yes wrangler@4.112.0 versions list --name "${WORKER_NAME}" --json > "${OUT}/versions-after.json"
+          npx --yes wrangler@4.112.0 deployments list --name "${WORKER_NAME}" --json > "${OUT}/deployments-after.json"
+
+      - name: Prove production traffic unchanged
+        working-directory: release
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const out = process.env.OUT;
+          const before = JSON.parse(fs.readFileSync(`${out}/deployments-before.json`, 'utf8'));
+          const after = JSON.parse(fs.readFileSync(`${out}/deployments-after.json`, 'utf8'));
+          const unchanged = JSON.stringify(before) === JSON.stringify(after);
+          fs.writeFileSync(`${out}/traffic-proof.json`, JSON.stringify({ production_deployments_unchanged: unchanged }, null, 2));
+          if (!unchanged) throw new Error('PRODUCTION_DEPLOYMENT_CHANGED_DURING_PREVIEW');
+          NODE
+
+      - name: Wait for preview endpoint
+        run: |
+          set -Eeuo pipefail
+          for attempt in $(seq 1 30); do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' "${PREVIEW_URL}/" || true)
+            [ "${status}" = "200" ] && exit 0
+            sleep 3
+          done
+          exit 1
+
+      - name: Install Chromium and run remote audit
+        working-directory: release
+        run: |
+          set -Eeuo pipefail
+          cp ../control/scripts/cloudflare-preview-audit.js .ci-preview-audit.js
+          npx playwright install --with-deps chromium
+          node .ci-preview-audit.js
+          rm -f .ci-preview-audit.js
+
+      - name: Verify evidence checksums
+        if: always()
+        working-directory: release
+        run: |
+          set -Eeuo pipefail
+          cd "${OUT}"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload redacted preview evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-preview-final-${{ env.SOURCE_SHA }}
+          path: release/output/cloudflare-preview-final/
+          if-no-files-found: error
+          retention-days: 14
