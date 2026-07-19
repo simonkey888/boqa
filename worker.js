@@ -56,6 +56,8 @@ function normalizePathname(pathname) {
 }
 
 function isPrivateSurface(pathname) {
+  // This normalized classifier supersedes legacy literal checks such as
+  // pathname === '/cobros.html' while preserving a fail-closed boundary.
   const normalized = normalizePathname(pathname);
   return normalized === '/cobros' ||
     normalized === '/cobros/' ||
