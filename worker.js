@@ -3,6 +3,9 @@
  * No demo data is generated at the edge.
  */
 
+const HUNTER_STATES = new Set(['STOPPED', 'STARTING', 'ACTIVE', 'DEGRADED', 'BLOCKED', 'ERROR']);
+const HUNTER_TIME_FIELDS = ['heartbeat_at', 'last_started_at', 'last_completed_at', 'next_scheduled_at'];
+
 async function computeHmacSignature(secret, method, path, ts, bodyStr) {
   const payload = method.toUpperCase() + path + String(ts) + bodyStr;
   const encoder = new TextEncoder();
@@ -43,7 +46,6 @@ function normalizePathname(pathname) {
     try {
       next = decodeURIComponent(decoded);
     } catch (_) {
-      // Malformed encodings remain untrusted and are compared in their raw form.
       break;
     }
     if (next === decoded) break;
@@ -56,8 +58,6 @@ function normalizePathname(pathname) {
 }
 
 function isPrivateSurface(pathname) {
-  // This normalized classifier supersedes legacy literal checks such as
-  // pathname === '/cobros.html' while preserving a fail-closed boundary.
   const normalized = normalizePathname(pathname);
   return normalized === '/cobros' ||
     normalized === '/cobros/' ||
@@ -88,13 +88,82 @@ function hiddenPrivateResponse(pathname) {
 }
 
 function isAllowedApiRequest(request, pathname) {
-  // The public dashboard consumes only these two minimal, read-only contracts.
-  // Every other backend API remains undiscoverable at the public edge.
   const publicReadPaths = new Set([
     '/api/health',
     '/api/hunter/status',
   ]);
   return request.method === 'GET' && publicReadPaths.has(pathname);
+}
+
+function validIso(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+function normalizeFreshness(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const output = {};
+  for (const key of ['heartbeat_fresh', 'cycle_fresh', 'invariants_fresh']) {
+    if (typeof value[key] === 'boolean') output[key] = value[key];
+  }
+  for (const key of ['heartbeat_age_ms', 'cycle_age_ms', 'invariant_age_ms', 'heartbeat_freshness_ms', 'cycle_freshness_ms']) {
+    if (Number.isFinite(value[key]) && value[key] >= 0) output[key] = value[key];
+  }
+  return Object.keys(output).length ? output : undefined;
+}
+
+function normalizeLegacyHunterPayload(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (!HUNTER_STATES.has(value.state)) return null;
+  const timestamp = validIso(value.timestamp);
+  if (!timestamp) return null;
+
+  const output = { state: value.state, timestamp };
+  const freshness = normalizeFreshness(value.freshness);
+  if (freshness) output.freshness = freshness;
+  for (const key of HUNTER_TIME_FIELDS) {
+    const normalized = validIso(value[key]);
+    output[key] = normalized;
+  }
+  return output;
+}
+
+function hardenedProxyResponse(backendResponse, extraHeaders = {}) {
+  const headers = new Headers(backendResponse.headers);
+  headers.delete('Transfer-Encoding');
+  headers.set('Cache-Control', 'no-store, max-age=0');
+  headers.set('Pragma', 'no-cache');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  for (const [name, value] of Object.entries(extraHeaders)) headers.set(name, value);
+  return new Response(backendResponse.body, {
+    status: backendResponse.status,
+    statusText: backendResponse.statusText,
+    headers,
+  });
+}
+
+async function fetchBackend({ parsedBackend, request, backendPath, workerApiKey, hmacSecret, bodyForProxy, bodyString }) {
+  const incomingUrl = new URL(request.url);
+  const pathWithQuery = backendPath + (backendPath.includes('?') ? '' : incomingUrl.search);
+  const targetUrl = new URL(pathWithQuery, parsedBackend);
+  const proxyHeaders = new Headers(request.headers);
+  proxyHeaders.set('Host', parsedBackend.host);
+  proxyHeaders.set('X-API-Key', workerApiKey);
+  proxyHeaders.delete('CF-Connecting-IP');
+  proxyHeaders.delete('X-Forwarded-For');
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const signature = await computeHmacSignature(hmacSecret, request.method, pathWithQuery, timestamp, bodyString);
+  proxyHeaders.set('X-BOQA-Sig', signature);
+  proxyHeaders.set('X-BOQA-Ts', String(timestamp));
+
+  return fetch(new Request(targetUrl.toString(), {
+    method: request.method,
+    headers: proxyHeaders,
+    body: bodyForProxy,
+    redirect: 'manual',
+  }));
 }
 
 async function proxyToBackend(request, env) {
@@ -113,13 +182,6 @@ async function proxyToBackend(request, env) {
   }
 
   const incomingUrl = new URL(request.url);
-  const targetUrl = new URL(incomingUrl.pathname + incomingUrl.search, parsedBackend);
-  const proxyHeaders = new Headers(request.headers);
-  proxyHeaders.set('Host', parsedBackend.host);
-  proxyHeaders.set('X-API-Key', workerApiKey);
-  proxyHeaders.delete('CF-Connecting-IP');
-  proxyHeaders.delete('X-Forwarded-For');
-
   let bodyForProxy;
   let bodyString = '';
   if (!['GET', 'HEAD'].includes(request.method)) {
@@ -128,19 +190,16 @@ async function proxyToBackend(request, env) {
     bodyString = new TextDecoder().decode(bodyBuffer);
   }
 
-  const timestamp = Math.floor(Date.now() / 1000);
-  const pathWithQuery = incomingUrl.pathname + incomingUrl.search;
-  const signature = await computeHmacSignature(hmacSecret, request.method, pathWithQuery, timestamp, bodyString);
-  proxyHeaders.set('X-BOQA-Sig', signature);
-  proxyHeaders.set('X-BOQA-Ts', String(timestamp));
-
   try {
-    const backendResponse = await fetch(new Request(targetUrl.toString(), {
-      method: request.method,
-      headers: proxyHeaders,
-      body: bodyForProxy,
-      redirect: 'manual',
-    }));
+    const backendResponse = await fetchBackend({
+      parsedBackend,
+      request,
+      backendPath: incomingUrl.pathname,
+      workerApiKey,
+      hmacSecret,
+      bodyForProxy,
+      bodyString,
+    });
 
     const websocketUpgrade = backendResponse.status === 101 ||
       (backendResponse.headers.get('upgrade') || '').toLowerCase() === 'websocket';
@@ -148,16 +207,35 @@ async function proxyToBackend(request, env) {
       return jsonResponse({ error: 'websocket_not_supported_via_worker', fallback: 'http_polling' }, 426);
     }
 
-    const headers = new Headers(backendResponse.headers);
-    headers.delete('Transfer-Encoding');
-    headers.set('Cache-Control', 'no-store, max-age=0');
-    headers.set('Pragma', 'no-cache');
-    headers.set('X-Content-Type-Options', 'nosniff');
-    return new Response(backendResponse.body, {
-      status: backendResponse.status,
-      statusText: backendResponse.statusText,
-      headers,
-    });
+    if (request.method === 'GET' && incomingUrl.pathname === '/api/hunter/status' && backendResponse.status === 404) {
+      const legacyResponse = await fetchBackend({
+        parsedBackend,
+        request,
+        backendPath: '/api/defensive/status',
+        workerApiKey,
+        hmacSecret,
+        bodyForProxy: undefined,
+        bodyString: '',
+      });
+      if (!legacyResponse.ok) {
+        return jsonResponse({ error: 'hunter_contract_unavailable' }, 503);
+      }
+      let legacyPayload;
+      try {
+        legacyPayload = await legacyResponse.json();
+      } catch (_) {
+        return jsonResponse({ error: 'legacy_hunter_contract_invalid' }, 502);
+      }
+      const normalized = normalizeLegacyHunterPayload(legacyPayload);
+      if (!normalized) {
+        return jsonResponse({ error: 'legacy_hunter_contract_invalid' }, 502);
+      }
+      return jsonResponse(normalized, 200, {
+        'X-BOQA-Backend-Contract': 'defensive-status-v1',
+      });
+    }
+
+    return hardenedProxyResponse(backendResponse);
   } catch (_) {
     return jsonResponse({ error: 'backend_unreachable' }, 504);
   }
