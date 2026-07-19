@@ -1,1 +1,41 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>Área privada · BOQA</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/private.css"></head><body class="private-body"><main class="private-shell"><section id="gate" class="private-card"><span class="brand">BOQA</span><h1>Área privada</h1><p>Ingresá tu código de acceso</p><form id="access-form" autocomplete="off"><label for="pin">Código</label><input id="pin" name="pin" type="password" inputmode="numeric" required autocomplete="off"><button type="submit">Continuar</button><p id="auth-error" role="alert"></p></form></section><section id="private-content" class="private-content" hidden><header><div><span class="brand">BOQA</span><h1>Área privada</h1><p id="session-state">Sesión activa</p></div><button id="logout">Cerrar área privada</button></header><div class="private-card"><h2>Movimientos</h2><div id="movements" class="empty">Sin movimientos disponibles</div></div></section></main><script src="/cobros.js" defer></script></body></html>
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="referrer" content="no-referrer">
+  <title>Acceso restringido · BOQA</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/private.css">
+  <script src="/cobros.js" defer></script>
+</head>
+<body class="private-body">
+  <main class="private-shell" id="main">
+    <section id="gate" class="private-card" aria-labelledby="gate-title">
+      <span class="brand">BOQA</span>
+      <p class="private-eyebrow">Acceso restringido</p>
+      <h1 id="gate-title">Verificación requerida</h1>
+      <p>Ingresá el código autorizado para continuar.</p>
+      <form id="access-form" autocomplete="off" novalidate>
+        <label for="pin">Código de acceso</label>
+        <input id="pin" name="pin" type="password" inputmode="numeric" maxlength="128" required autocomplete="off" aria-describedby="auth-error">
+        <button type="submit">Continuar</button>
+        <p id="auth-error" role="alert" aria-live="assertive"></p>
+      </form>
+    </section>
+
+    <section id="private-root" class="private-content" aria-live="polite" hidden>
+      <header class="private-header">
+        <div>
+          <span class="brand">BOQA</span>
+          <p id="session-state">Sesión privada activa</p>
+        </div>
+        <button id="logout" type="button">Cerrar sesión</button>
+      </header>
+      <div id="private-view" class="private-card"></div>
+    </section>
+  </main>
+</body>
+</html>
