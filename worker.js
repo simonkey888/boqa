@@ -36,6 +36,43 @@ function failClosedApi(pathname) {
   }, 503);
 }
 
+function normalizePathname(pathname) {
+  let decoded = String(pathname || '/');
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch (_) {
+    // Malformed encodings remain untrusted and are compared in their raw form.
+  }
+  return decoded.replace(/\/{2,}/g, '/').toLowerCase();
+}
+
+function isPrivateSurface(pathname) {
+  const normalized = normalizePathname(pathname);
+  return normalized === '/cobros' ||
+    normalized === '/cobros/' ||
+    normalized.endsWith('/cobros.html') ||
+    normalized.endsWith('/cobros.js') ||
+    normalized.endsWith('/private.css') ||
+    normalized === '/api/private/billing' ||
+    normalized.startsWith('/api/private/billing/');
+}
+
+function hiddenPrivateResponse(pathname) {
+  const normalized = normalizePathname(pathname);
+  const headers = {
+    'Cache-Control': 'no-store, max-age=0',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Robots-Tag': 'noindex, nofollow, noarchive',
+    'Referrer-Policy': 'no-referrer',
+  };
+  if (normalized.startsWith('/api/')) {
+    return jsonResponse({ error: 'not_found' }, 404, headers);
+  }
+  return new Response('Not Found', { status: 404, headers });
+}
+
 function isAllowedApiRequest(request, pathname) {
   const publicReadPaths = new Set([
     '/api/health',
@@ -44,9 +81,7 @@ function isAllowedApiRequest(request, pathname) {
     '/api/hunter/status',
     '/api/bugs',
   ]);
-  const isPublicRead = request.method === 'GET' && publicReadPaths.has(pathname);
-  const isPrivateBilling = pathname.startsWith('/api/private/billing/');
-  return { allowed: isPublicRead || isPrivateBilling, isPrivateBilling };
+  return request.method === 'GET' && publicReadPaths.has(pathname);
 }
 
 async function proxyToBackend(request, env) {
@@ -118,21 +153,13 @@ async function proxyToBackend(request, env) {
 function secureAssetResponse(assetResponse, pathname) {
   const headers = new Headers(assetResponse.headers);
   const isMutableAsset = pathname === '/' || pathname.endsWith('.html') || pathname.endsWith('.js') || pathname.endsWith('.css');
-  const isPrivateAsset = pathname === '/cobros' || pathname === '/cobros.html' || pathname === '/cobros.js' || pathname === '/private.css';
-  if (isMutableAsset || isPrivateAsset) {
+  if (isMutableAsset) {
     headers.set('Cache-Control', 'no-store, max-age=0');
     headers.set('Pragma', 'no-cache');
     headers.set('Expires', '0');
   }
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Referrer-Policy', 'no-referrer');
-  if (isPrivateAsset) {
-    headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
-    headers.set('Content-Security-Policy', "default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
-    headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-    headers.set('Cross-Origin-Resource-Policy', 'same-origin');
-    headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-  }
   return new Response(assetResponse.body, {
     status: assetResponse.status,
     statusText: assetResponse.statusText,
@@ -145,8 +172,12 @@ export default {
     const url = new URL(request.url);
     const backendConfigured = Boolean(env && env.BOQA_BACKEND_URL);
 
+    if (isPrivateSurface(url.pathname)) {
+      return hiddenPrivateResponse(url.pathname);
+    }
+
     if (url.pathname.startsWith('/api/')) {
-      const { allowed } = isAllowedApiRequest(request, url.pathname);
+      const allowed = isAllowedApiRequest(request, url.pathname);
       if (!allowed) return jsonResponse({ error: 'not_found' }, 404);
       if (!backendConfigured) return failClosedApi(url.pathname);
       return proxyToBackend(request, env);
