@@ -1,6 +1,6 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-19T14:58:00-03:00  
+LAST_VERIFIED_AT=2026-07-19T15:20:00-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
 ## Estado verificado
@@ -9,25 +9,46 @@ TIMEZONE=America/Argentina/Cordoba
 - `MAIN_SHA=bc6f45acefe693f3cc2940d91f715d11ee50da93`
 - `LAST_MERGED_PR=PR #23`
 - `PRODUCTION_SHA=INDETERMINADO`
-- Producción no fue modificada por PR #22 ni PR #23.
+- Producción no fue modificada por los builds preview.
 
 ## Producto integrado
 
 - Frontera privada oculta en el Worker público.
 - API pública limitada a `GET /api/health` y `GET /api/hunter/status`.
 - Dashboard validado en desktop 1440, mobile 390 y mobile 360.
-- Browser y Docker finales de PR #23: SUCCESS.
 
-## Flujo activo — Cloudflare preview v5
+## PR #24 — Cloudflare preview v5
 
 - `BRANCH=deploy/boqa-cloudflare-preview-v5`
 - `BASE_SHA=bc6f45acefe693f3cc2940d91f715d11ee50da93`
 - `STATUS=IN_PROGRESS`
-- Workers Builds debe permanecer preview-only.
-- Trigger productivo permitido: 0.
-- El build de validación debe fijarse a rama y SHA exactos mediante Builds API.
-- La nueva versión debe identificarse, obtener preview URL y probarse sin modificar el deployment activo.
-- Deployment y distribución de tráfico antes/después deben coincidir exactamente.
+- Workers Builds: preview-only.
+- Trigger productivo: 0.
+- Cada build está fijado a rama y SHA exactos mediante Builds API.
+- Deployment activo antes/después: idéntico en todos los intentos.
+
+### Evidencia acumulada
+
+- Run `29697877432`: build exacto SUCCESS; smoke bloqueado por disponibilidad/validador inicial.
+- Run `29698121180`: build exacto SUCCESS; smoke no iniciado por regex demasiado restrictiva para el hostname versionado.
+- Run `29698272514`: build exacto SUCCESS; preview ready en el primer intento; `/api/health` 200; `/api/hunter/status` 404 desde el backend productivo legacy.
+- Última versión del tercer intento: `36fed9c6-544f-4dc3-a3cd-38ba91f5f3ee`.
+- Preview del tercer intento: `https://36fed9c6-boqa.simondalmasso44.workers.dev`.
+- Deployment productivo conservado: `71016a2b-edc4-4786-8bf4-b56749507554`, 100% en la versión histórica `136e5689-91d3-4431-8af0-d8b3248c6e3c`.
+- Producción cambiada: false.
+
+### Compatibilidad backend legacy
+
+El backend productivo activo responde `GET /api/health` pero todavía no registra `GET /api/hunter/status`. El Worker implementa una compatibilidad interna y acotada:
+
+1. intenta el contrato moderno `/api/hunter/status`;
+2. sólo ante 404 consulta internamente `/api/defensive/status` con autenticación y firma recalculadas;
+3. valida `state` y `timestamp`;
+4. recorta la respuesta al contrato mínimo del hunter;
+5. elimina cualquier campo adicional, incluido inventario o evidencia;
+6. devuelve 502/503 si el payload legacy no cumple.
+
+La ruta `/api/defensive/status` continúa respondiendo 404 en el borde público y nunca aparece en el frontend.
 
 ## Arquitectura de entrega decidida
 
@@ -40,10 +61,10 @@ TIMEZONE=America/Argentina/Cordoba
 
 ## Backend
 
-- PR #19 histórico continúa basado en un `main` obsoleto.
-- Debe reconstruirse sobre el `main` final.
-- El complemento de Cloudflare no sustituye el acceso al runtime que ejecuta Node, Playwright y Docker.
-- Sin acceso remoto efectivo, el deploy backend permanece bloqueado y no se puede declarar readiness productiva.
+- PR #25 es el único preflight backend vigente.
+- PR #19 fue cerrado como supersedido.
+- El deploy backend continúa bloqueado por falta de acceso remoto efectivo.
+- Cloudflare no sustituye el runtime que ejecuta Node, Playwright y Docker.
 
 ## Reglas permanentes
 
@@ -57,4 +78,4 @@ TIMEZONE=America/Argentina/Cordoba
 
 ## Siguiente acción exacta
 
-Agregar el workflow preview v5, abrir Draft PR contra `main`, disparar un build Cloudflare exacto para el head del PR, identificar su versión y preview URL, comprobar que producción no cambió y validar la preview completa.
+Ejecutar Browser, Docker y Cloudflare Exact Preview sobre este head, exigir que la compatibilidad legacy entregue el contrato mínimo y que el deployment permanezca idéntico; luego registrar evidencia final antes del merge.
