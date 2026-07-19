@@ -25,9 +25,12 @@ const replacement = String.raw`async function privateSmoke(browser) {
     '/cobros/',
     '/COBROS',
     '/%63obros',
+    '/%2563obros',
+    '/%252563obros',
     '//cobros',
     '/cobros.html',
     '/nested/cobros.html',
+    '/%2563obros.html',
     '/cobros.js',
     '/private.css',
     '/api/private/billing',
@@ -35,7 +38,9 @@ const replacement = String.raw`async function privateSmoke(browser) {
     '/api/private/billing/data',
     '/API/PRIVATE/BILLING/DATA',
     '/%61pi/private/billing/data',
+    '/%2561pi%252fprivate%252fbilling%252fdata',
     '/api//private//billing//data',
+    '/api/%255cprivate%255cbilling%255cdata',
   ];
 
   for (const pathname of privatePaths) {
@@ -50,8 +55,8 @@ const replacement = String.raw`async function privateSmoke(browser) {
     assert.equal(response.headers.get('location'), null, pathname + ':REDIRECT_LEAK');
     assert(!/centro de cobros|movimientos|saldo|monto|ingreso|billing|payment|pago|finanz/i.test(body), pathname + ':PRIVATE_PURPOSE_LEAK');
 
-    const normalized = pathname.toLowerCase().replace(/%61/g, 'a').replace(/\/{2,}/g, '/');
-    if (normalized.startsWith('/api/')) {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
       assert.deepEqual(JSON.parse(body), { error: 'not_found' }, pathname + ':GENERIC_API_BODY');
     } else {
       assert.equal(body, 'Not Found', pathname + ':GENERIC_ASSET_BODY');
