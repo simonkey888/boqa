@@ -9,6 +9,9 @@ const ROOT = path.join(__dirname, '..');
 const OUTPUT = path.join(ROOT, 'output', 'cloudflare-preview-v5', 'browser');
 const PREVIEW_URL = String(process.env.BOQA_PREVIEW_URL || '').replace(/\/$/, '');
 const HEAD_SHA = process.env.BOQA_HEAD_SHA || process.env.GITHUB_SHA || 'unknown';
+const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID || '';
+const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN || '';
+const WORKER_NAME = process.env.WORKER_NAME || 'boqa';
 
 if (!/^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)+\.workers\.dev$/i.test(PREVIEW_URL)) {
   throw new Error('INVALID_OR_MISSING_PREVIEW_URL');
@@ -18,6 +21,15 @@ fs.mkdirSync(OUTPUT, { recursive: true });
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseJsonObject(body) {
+  try {
+    const value = JSON.parse(body);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 async function waitForPreview(evidence, timeoutMs = 180_000) {
@@ -31,8 +43,7 @@ async function waitForPreview(evidence, timeoutMs = 180_000) {
         headers: { 'Cache-Control': 'no-cache' },
       });
       const body = await response.text();
-      let json = null;
-      try { json = JSON.parse(body); } catch (_) {}
+      const json = parseJsonObject(body);
       attempts.push({ status: response.status, error: null });
       if (response.status === 200 && json?.status === 'ok' && json?.worker === 'boqa') {
         evidence.preview_readiness = { ready: true, attempt_count: attempts.length, last_status: response.status };
@@ -59,6 +70,63 @@ async function fetchJson(pathname, expectedStatus = 200) {
   return { response, body, json: JSON.parse(body) };
 }
 
+async function probeOwnedBackendCompatibility() {
+  const result = {
+    attempted: false,
+    settings_available: false,
+    backend_url_recorded: false,
+    probes: [],
+  };
+  if (!CF_ACCOUNT_ID || !CF_API_TOKEN || !WORKER_NAME) return result;
+
+  const settingsResponse = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(CF_ACCOUNT_ID)}/workers/scripts/${encodeURIComponent(WORKER_NAME)}/settings`,
+    { headers: { Authorization: `Bearer ${CF_API_TOKEN}` }, cache: 'no-store' },
+  );
+  const settingsBody = await settingsResponse.text();
+  const settings = parseJsonObject(settingsBody);
+  result.settings_http = settingsResponse.status;
+  if (!settingsResponse.ok || settings?.success !== true) return result;
+
+  const bindings = Array.isArray(settings.result?.bindings) ? settings.result.bindings : [];
+  const binding = bindings.find((item) => item?.name === 'BOQA_BACKEND_URL');
+  const backendUrl = binding?.text || binding?.value || binding?.content || '';
+  result.settings_available = true;
+  if (typeof backendUrl !== 'string' || !/^https?:\/\//i.test(backendUrl)) return result;
+
+  result.attempted = true;
+  const base = new URL(backendUrl);
+  for (const pathname of [
+    '/api/health',
+    '/api/hunter/status',
+    '/api/defensive/status',
+    '/api/defensive/status/',
+    '/api/runtime/metrics',
+  ]) {
+    try {
+      const response = await fetch(new URL(pathname, base), { cache: 'no-store', redirect: 'manual' });
+      const body = await response.text();
+      const json = parseJsonObject(body);
+      result.probes.push({
+        pathname,
+        status: response.status,
+        content_type: (response.headers.get('content-type') || '').split(';')[0] || null,
+        json_keys: json ? Object.keys(json).sort().slice(0, 30) : [],
+        location_present: Boolean(response.headers.get('location')),
+      });
+    } catch (error) {
+      result.probes.push({
+        pathname,
+        status: null,
+        error: error.cause?.code || error.code || error.message || 'fetch_failed',
+        json_keys: [],
+        location_present: false,
+      });
+    }
+  }
+  return result;
+}
+
 async function verifyEdgeContracts(evidence) {
   const workerHealth = await fetchJson('/health');
   assert.equal(workerHealth.json.status, 'ok');
@@ -80,29 +148,33 @@ async function verifyEdgeContracts(evidence) {
     hunter_state: backendHealth.json.hunter?.state || null,
   };
 
-  const hunter = await fetchJson('/api/hunter/status');
-  assert.equal(typeof hunter.json, 'object');
+  const hunterResponse = await fetch(`${PREVIEW_URL}/api/hunter/status`, {
+    cache: 'no-store',
+    redirect: 'manual',
+    headers: { 'Cache-Control': 'no-cache' },
+  });
+  const hunterBody = await hunterResponse.text();
+  const hunterJson = parseJsonObject(hunterBody);
+  if (hunterResponse.status !== 200) {
+    evidence.hunter_public_failure = {
+      status: hunterResponse.status,
+      error: typeof hunterJson?.error === 'string' ? hunterJson.error : null,
+    };
+    evidence.backend_compatibility_probe = await probeOwnedBackendCompatibility();
+  }
+  assert.equal(hunterResponse.status, 200, `/api/hunter/status:STATUS_${hunterResponse.status}:${hunterBody.slice(0, 200)}`);
+  assert(hunterJson, 'hunter response must be a JSON object');
   evidence.hunter = {
-    state: hunter.json.state || null,
-    heartbeat_at: hunter.json.heartbeat_at || null,
-    source_timestamp: hunter.json.source_timestamp || hunter.json.timestamp || null,
+    state: hunterJson.state || null,
+    heartbeat_at: hunterJson.heartbeat_at || null,
+    source_timestamp: hunterJson.source_timestamp || hunterJson.timestamp || null,
+    compatibility_contract: hunterResponse.headers.get('x-boqa-backend-contract') || 'modern',
   };
 
   const concealedPaths = [
-    '/cobros',
-    '/COBROS',
-    '/%2563obros',
-    '/cobros.html',
-    '/cobros.js',
-    '/private.css',
-    '/api/private/billing',
-    '/api/private/billing/data',
-    '/api/%255cprivate%255cbilling%255cdata',
-    '/api/runtime/metrics',
-    '/api/defensive/status',
-    '/api/bugs',
-    '/api/findings',
-    '/api/metrics',
+    '/cobros', '/COBROS', '/%2563obros', '/cobros.html', '/cobros.js', '/private.css',
+    '/api/private/billing', '/api/private/billing/data', '/api/%255cprivate%255cbilling%255cdata',
+    '/api/runtime/metrics', '/api/defensive/status', '/api/bugs', '/api/findings', '/api/metrics',
   ];
 
   evidence.concealed_paths = [];
