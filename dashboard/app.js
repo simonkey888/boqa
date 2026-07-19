@@ -16,9 +16,13 @@
     return value === null || value === undefined || value === '' ? 'N/D' : String(value);
   }
 
+  function parseTime(value) {
+    if (!value) return NaN;
+    return Date.parse(value);
+  }
+
   function formatIso(value) {
-    if (!value) return 'N/D';
-    const parsed = Date.parse(value);
+    const parsed = parseTime(value);
     return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : 'N/D';
   }
 
@@ -41,6 +45,70 @@
     $(`${name}-reason`).textContent = text(source.reason);
   }
 
+  function cycleIsRunning(payload) {
+    if (!payload || payload.state !== 'STARTING') return false;
+    const startedAt = parseTime(payload.last_started_at);
+    const completedAt = parseTime(payload.last_completed_at);
+    return Number.isFinite(startedAt) && (!Number.isFinite(completedAt) || startedAt > completedAt);
+  }
+
+  function renderHuntLive(hunter) {
+    const strip = $('hunt-live');
+    const label = $('hunt-live-label');
+    const detail = $('hunt-live-detail');
+    const payload = hunter.payload;
+    let mode = 'waiting';
+    let labelText = 'Esperando estado real';
+    let detailText = 'Sin datos del runtime.';
+
+    if (!payload) {
+      if (hunter.view_state === 'STALE') {
+        mode = 'stale';
+        labelText = 'Señal vencida';
+        detailText = 'El último estado perdió vigencia.';
+      } else if (hunter.view_state === 'UNAVAILABLE') {
+        mode = 'alert';
+        labelText = 'Hunter no disponible';
+        detailText = 'El contrato público no respondió.';
+      }
+    } else if (cycleIsRunning(payload)) {
+      mode = 'running';
+      labelText = 'Ciclo en curso';
+      detailText = 'Verificando un activo autorizado.';
+    } else if (payload.state === 'ACTIVE') {
+      mode = 'ready';
+      labelText = 'Hunter listo';
+      detailText = payload.next_scheduled_at
+        ? `Próximo ciclo: ${formatIso(payload.next_scheduled_at)}.`
+        : 'Esperando la próxima ejecución programada.';
+    } else if (payload.state === 'STARTING') {
+      mode = 'starting';
+      labelText = 'Inicializando hunter';
+      detailText = 'Validando dependencias antes del próximo ciclo.';
+    } else if (payload.state === 'DEGRADED') {
+      mode = 'stale';
+      labelText = 'Hunter degradado';
+      detailText = 'El runtime no cumple todas las condiciones de frescura.';
+    } else if (payload.state === 'BLOCKED') {
+      mode = 'alert';
+      labelText = 'Hunter bloqueado';
+      detailText = 'La política impide ejecutar el ciclo.';
+    } else if (payload.state === 'ERROR') {
+      mode = 'alert';
+      labelText = 'Hunter con error';
+      detailText = 'El runtime requiere revisión.';
+    } else if (payload.state === 'STOPPED') {
+      mode = 'stopped';
+      labelText = 'Hunter detenido';
+      detailText = 'No hay un ciclo activo.';
+    }
+
+    strip.dataset.mode = mode;
+    label.textContent = labelText;
+    detail.textContent = detailText;
+    strip.setAttribute('aria-label', `Actividad del hunter: ${labelText}. ${detailText}`);
+  }
+
   function render(next) {
     model = next;
     document.body.dataset.viewState = next.overall.view_state;
@@ -52,6 +120,7 @@
     const health = next.sources.health;
     renderSource('hunter', hunter);
     renderSource('health', health);
+    renderHuntLive(hunter);
 
     $('hunter-state').textContent = text(hunter.payload && hunter.payload.state);
     $('heartbeat-at').textContent = formatIso(hunter.payload && hunter.payload.heartbeat_at);
