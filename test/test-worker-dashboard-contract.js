@@ -25,7 +25,13 @@ assert.match(worker, /X-BOQA-Ts/);
 assert.match(worker, /redirect:\s*'manual'/, 'Worker must not follow backend redirects');
 assert.match(worker, /Cache-Control': 'no-store, max-age=0'/, 'JSON responses must be no-store');
 assert.match(worker, /headers\.set\('Cache-Control', 'no-store, max-age=0'\)/, 'proxied state must be no-store');
-assert.doesNotMatch(worker, /'\/api\/runtime\/metrics'|'\/api\/defensive\/status'|'\/api\/bugs'/, 'unused operational APIs must not be public');
+
+const allowlistMatch = worker.match(/const publicReadPaths = new Set\(\[([\s\S]*?)\]\);/);
+assert(allowlistMatch, 'public API allowlist must be explicit');
+assert.doesNotMatch(allowlistMatch[1], /\/api\/runtime\/metrics|\/api\/defensive\/status|\/api\/bugs/, 'unused operational APIs must not be public');
+assert.match(worker, /backendPath:\s*'\/api\/defensive\/status'/, 'legacy fallback must remain internal');
+assert.match(worker, /normalizeLegacyHunterPayload/, 'legacy payload must be normalized before exposure');
+assert.match(worker, /legacy_hunter_contract_invalid/, 'invalid legacy payload must fail closed');
 assert.doesNotMatch(worker, /DEMO_|demoJsonEvidence|mock data|caches\.default|cacheTtl|s-maxage/i, 'demo and edge caching must be absent');
 assert.doesNotMatch(app + html, /\/api\/defensive\/status|\/api\/bugs|\/api\/findings/, 'dashboard must not consume legacy synthetic sources');
 assert.match(state, /cache:\s*'no-store'/, 'browser fetch must explicitly bypass caches');
