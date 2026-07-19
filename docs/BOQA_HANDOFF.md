@@ -1,6 +1,6 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-19T14:40:00-03:00  
+LAST_VERIFIED_AT=2026-07-19T14:49:00-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
 ## Estado verificado
@@ -9,48 +9,62 @@ TIMEZONE=America/Argentina/Cordoba
 - `MAIN_SHA=9570a9fdfb577c92c172f520cf2489d54fc4956b`
 - `LAST_MERGED_PR=PR #22`
 - `PRODUCTION_SHA=INDETERMINADO`
-- Producción no fue modificada por PR #22.
+- Producción no fue modificada por PR #22 ni PR #23.
 
 ## Frontera pública integrada
 
-El Worker público oculta la superficie privada antes del proxy y de los assets. Páginas, archivos y rutas privadas responden `404` genérico con política de no almacenamiento, incluso con mayúsculas, separadores alternativos y codificación múltiple.
+El Worker público oculta la superficie privada antes del proxy y de los assets. La API pública queda limitada a `GET /api/health` y `GET /api/hunter/status`; cualquier otra API responde `404` genérico y no llega al backend.
 
-La API pública queda limitada a:
-
-- `GET /api/health`
-- `GET /api/hunter/status`
-
-Cualquier otra API responde `404` genérico y no llega al backend.
-
-### Evidencia final de PR #22
-
-- `FINAL_HEAD=2b883c9981ad4b61c7db691d5f391a752ae4d61d`
-- `BROWSER_RUN=29697179204` — SUCCESS
-- `DOCKER_RUN=29697179195` — SUCCESS
-- desktop 1440, mobile 390 y mobile 360: PASS;
-- overflow horizontal: 0;
-- errores de página: 0;
-- errores críticos de consola: 0;
-- rutas ocultas: 404 opaco;
-- deploy realizado: false.
-
-## Flujo activo — mobile clarity v2
+## PR #23 — mobile clarity v2
 
 - `BRANCH=fix/boqa-mobile-clarity-v2`
 - `BASE_SHA=9570a9fdfb577c92c172f520cf2489d54fc4956b`
-- `STATUS=IN_PROGRESS`
+- `VALIDATED_CODE_SHA=b9fde58a2cd0d2da18601476ef38364aaa5538cc`
+- `STATE=OPEN_DRAFT`
+- Este archivo es un descendiente documental del SHA validado; verificar el HEAD remoto antes del merge.
 
-Alcance cerrado:
+Cambios validados:
 
-1. traducir códigos internos de estado y motivo a español legible;
-2. abreviar el SHA visible conservando el valor completo en metadata accesible;
-3. reducir densidad vertical en mobile sin alterar contratos, seguridad ni datos;
-4. validar desktop 1440, mobile 390 y mobile 360.
+1. códigos internos traducidos a textos legibles;
+2. timestamps compactos y deterministas en formato `es-AR`, con valor ISO accesible;
+3. SHA visible abreviado, con valor completo en metadata accesible;
+4. fuentes y paneles secundarios compactados en dos columnas para 360/390 px;
+5. fallback de una columna para pantallas menores a 340 px;
+6. copy de estados no disponibles simplificado sin inventar datos.
+
+### Evidencia
+
+- `BROWSER_RUN=29697489537` — SUCCESS
+- `BROWSER_ARTIFACT_ID=8445437653`
+- `BROWSER_DIGEST=sha256:2b5e266c2bea4c86300e7aefe8b39af726c088d8b0f0fbadc1e1cc0a2f0182ae`
+- `DOCKER_RUN=29697489554` — SUCCESS
+- `DOCKER_ARTIFACT_ID=8445444723`
+- `DOCKER_DIGEST=sha256:aa053fefe767869d7c0063c401d9ce36da174d1a198a54640a9368f8f6068b51`
+
+Browser smoke sobre el SHA validado:
+
+- desktop 1440: PASS;
+- mobile 390: PASS;
+- mobile 360: PASS;
+- texto humano y SHA accesible: PASS;
+- compactación mobile: PASS;
+- overflow horizontal: 0;
+- errores de página: 0;
+- errores críticos de consola: 0;
+- rutas privadas y operativas ocultas: PASS;
+- deploy realizado: false.
+
+Docker qualification sobre el mismo SHA:
+
+- instalación, sintaxis y suite completa: PASS;
+- integridad del diff: PASS;
+- identidad y arranque de imagen: PASS;
+- ejecución aislada final: PASS.
 
 ## Cloudflare y backend
 
 - Workers Builds permanece preview-only, sin trigger productivo.
-- PR #20 debe reconstruirse sobre el `main` final posterior al pulido mobile.
+- PR #20 debe reconstruirse sobre el `main` posterior a PR #23.
 - La versión exacta validada debe promoverse sin recompilar.
 - PR #19 continúa bloqueado por falta de acceso remoto al host del backend.
 - Cloudflare no sustituye el runtime que ejecuta Node, Playwright y Docker.
@@ -66,4 +80,8 @@ Alcance cerrado:
 
 ## Siguiente acción exacta
 
-Implementar el alcance mobile cerrado en esta rama, abrir PR hacia `main` y exigir Browser Smoke más Docker Qualification sobre el head exacto antes de mergear.
+1. Exigir Browser Smoke y Docker Qualification verdes sobre este commit documental.
+2. Verificar HEAD y mergeabilidad de PR #23.
+3. Integrar PR #23 sólo con SHA esperado.
+4. Reconstruir la preview Cloudflare y el preflight backend sobre el nuevo `main`.
+5. Promover sólo la versión exacta validada y verificar producción más rollback.
