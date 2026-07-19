@@ -1,0 +1,72 @@
+name: BOQA Cloudflare Worker Operation Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-worker-operation:
+    if: github.head_ref == 'deploy/boqa-cloudflare-preview-final'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Diagnose Worker secret-list capability
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/worker-operation-diagnostic
+          test -n "${CLOUDFLARE_API_TOKEN:-}" || { echo MISSING_ACCESS=CLOUDFLARE_API_TOKEN | tee output/worker-operation-diagnostic/result.txt; exit 78; }
+          set +e
+          npx --yes wrangler@4.112.0 secret list --name boqa --format json > output/worker-operation-diagnostic/secret-names.json 2> output/worker-operation-diagnostic/error.txt
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then
+            node <<'NODE'
+            const fs = require('fs');
+            const path = 'output/worker-operation-diagnostic/secret-names.json';
+            const raw = JSON.parse(fs.readFileSync(path, 'utf8'));
+            const rows = Array.isArray(raw) ? raw : (raw.secrets || []);
+            const names = rows.map((row) => typeof row === 'string' ? row : row.name).filter(Boolean);
+            fs.writeFileSync('output/worker-operation-diagnostic/result.json', JSON.stringify({ capability: 'PASS', names }, null, 2));
+            fs.rmSync(path);
+            NODE
+            rm -f output/worker-operation-diagnostic/error.txt
+            exit 0
+          fi
+          sed -E 's/(Bearer|token|Token|TOKEN|Authorization)[=: ]+[^ ]+/\1=[REDACTED]/g' output/worker-operation-diagnostic/error.txt > output/worker-operation-diagnostic/error-redacted.txt
+          rm -f output/worker-operation-diagnostic/error.txt output/worker-operation-diagnostic/secret-names.json
+          if grep -Eqi 'unknown argument|unknown option|unexpected argument|format' output/worker-operation-diagnostic/error-redacted.txt; then
+            result='WORKER_OPERATION=WRANGLER_CLI_SYNTAX_FAILURE'
+          elif grep -Eqi 'forbidden|permission|scope|not authorized|code.?10001' output/worker-operation-diagnostic/error-redacted.txt; then
+            result='WORKER_OPERATION=INSUFFICIENT_WORKER_SECRET_PERMISSIONS'
+          elif grep -Eqi 'not found|no such worker|service.*missing|code.?10090' output/worker-operation-diagnostic/error-redacted.txt; then
+            result='WORKER_OPERATION=WORKER_NOT_RESOLVED'
+          elif grep -Eqi 'account.?id|multiple accounts|non-interactive.*account' output/worker-operation-diagnostic/error-redacted.txt; then
+            result='WORKER_OPERATION=ACCOUNT_RESOLUTION_FAILURE'
+          else
+            result='WORKER_OPERATION=UNCLASSIFIED_FAILURE'
+          fi
+          printf '%s\nEXIT_CODE=%s\n' "$result" "$status" | tee output/worker-operation-diagnostic/result.txt
+          cat output/worker-operation-diagnostic/error-redacted.txt
+          exit 78
+
+      - name: Generate checksums
+        if: always()
+        run: |
+          cd output/worker-operation-diagnostic
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-worker-operation-diagnostic
+          path: output/worker-operation-diagnostic/
+          if-no-files-found: error
+          retention-days: 7
