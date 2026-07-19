@@ -38,7 +38,7 @@ function failClosedApi(pathname) {
 
 function normalizePathname(pathname) {
   let decoded = String(pathname || '/');
-  for (let pass = 0; pass < 3; pass += 1) {
+  for (let pass = 0; pass < 8; pass += 1) {
     let next;
     try {
       next = decodeURIComponent(decoded);
@@ -83,12 +83,11 @@ function hiddenPrivateResponse(pathname) {
 }
 
 function isAllowedApiRequest(request, pathname) {
+  // The public dashboard consumes only these two minimal, read-only contracts.
+  // Every other backend API remains undiscoverable at the public edge.
   const publicReadPaths = new Set([
     '/api/health',
-    '/api/runtime/metrics',
-    '/api/defensive/status',
     '/api/hunter/status',
-    '/api/bugs',
   ]);
   return request.method === 'GET' && publicReadPaths.has(pathname);
 }
