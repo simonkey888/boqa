@@ -9,10 +9,12 @@ const html = fs.readFileSync(path.join(root, 'dashboard', 'index.html'), 'utf8')
 const app = fs.readFileSync(path.join(root, 'dashboard', 'app.js'), 'utf8');
 const state = fs.readFileSync(path.join(root, 'dashboard', 'dashboard-state.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'dashboard', 'style.css'), 'utf8');
+const mobileCss = fs.readFileSync(path.join(root, 'dashboard', 'mobile.css'), 'utf8');
 const worker = fs.readFileSync(path.join(root, 'worker.js'), 'utf8');
 
 assert.match(html, /<script\s+src=["']\/dashboard-state\.js["']\s+defer><\/script>/, 'dashboard must load the state contract');
 assert.match(html, /<script\s+src=["']\/app\.js["']\s+defer><\/script>/, 'dashboard must load /app.js');
+assert.match(html, /<link\s+rel=["']stylesheet["']\s+href=["']\/mobile\.css["']>/, 'dashboard must load mobile overrides');
 assert.match(app, /poll\(\)/, 'dashboard must initialize');
 assert.doesNotMatch(app, /['"]X-API-Key['"]\s*:/, 'browser must not send backend API key');
 assert.doesNotMatch(app + html, /localStorage|auth-gate|modal de clave/i, 'dashboard must not contain a browser credential gate');
@@ -25,9 +27,15 @@ assert.match(html, /id=["']hunt-live["']/, 'dashboard must expose the lightweigh
 assert.match(app, /function cycleIsRunning\(payload\)/, 'live trace must use an explicit real-cycle predicate');
 assert.match(app, /payload\.state !== 'STARTING'/, 'live movement must require the runtime STARTING state');
 assert.match(app, /startedAt > completedAt/, 'live movement must require an unfinished real cycle');
+assert.match(app, /Todas las fuentes están actualizadas/, 'raw overall reason must have a human label');
+assert.match(app, /Contrato válido y actualizado/, 'raw source reason must have a human label');
+assert.match(app, /release\.slice\(0, 10\)/, 'visible release SHA must be abbreviated');
+assert.match(app, /Release completa:/, 'complete release SHA must remain accessible');
 assert.match(css, /@keyframes hunt-sweep/, 'live trace must include the lightweight sweep animation');
 assert.match(css, /prefers-reduced-motion:reduce/, 'live trace must respect reduced-motion preferences');
-assert.doesNotMatch(css, /@import|https?:\/\//i, 'dashboard CSS must not load remote fonts or visual dependencies');
+assert.match(mobileCss, /grid-template-columns:\s*repeat\(2/, 'mobile sources and secondary panels must compact into two columns');
+assert.match(mobileCss, /max-width:\s*340px/, 'narrow-device fallback must remain single-column');
+assert.doesNotMatch(css + mobileCss, /@import|https?:\/\//i, 'dashboard CSS must not load remote fonts or visual dependencies');
 assert.match(state, /LOADING/);
 assert.match(state, /FRESH/);
 assert.match(state, /STALE/);
