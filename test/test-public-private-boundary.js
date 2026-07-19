@@ -22,7 +22,9 @@ async function run() {
   assert(worker.includes("normalized.endsWith('/cobros.html')"));
   assert(worker.includes("normalized.endsWith('/cobros.js')"));
   assert(worker.includes("normalized.endsWith('/private.css')"));
+  assert(worker.includes('for (let pass = 0; pass < 3; pass += 1)'));
   assert(worker.includes('decodeURIComponent(decoded)'));
+  assert(worker.includes(".replace(/\\\\/g, '/')"));
   assert(worker.includes('if (isPrivateSurface(url.pathname))'));
   assert(worker.includes('return hiddenPrivateResponse(url.pathname)'));
   assert(worker.includes("error: 'not_found'"));
@@ -41,9 +43,12 @@ async function run() {
     '/cobros/',
     '/COBROS',
     '/%63obros',
+    '/%2563obros',
+    '/%252563obros',
     '//cobros',
     '/cobros.html',
     '/nested/cobros.html',
+    '/%2563obros.html',
     '/cobros.js',
     '/private.css',
     '/api/private/billing',
@@ -51,7 +56,9 @@ async function run() {
     '/api/private/billing/data',
     '/API/PRIVATE/BILLING/DATA',
     '/%61pi/private/billing/data',
+    '/%2561pi%252fprivate%252fbilling%252fdata',
     '/api//private//billing//data',
+    '/api/%255cprivate%255cbilling%255cdata',
   ];
 
   for (const pathname of privatePaths) {
@@ -69,10 +76,12 @@ async function run() {
     assert.equal(response.status, 404, `${pathname} must be concealed with 404`);
     assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
     assert.match(response.headers.get('x-robots-tag') || '', /noindex/);
+    assert.equal(response.headers.get('location'), null);
     assert.equal(assetsTouched, false, `${pathname} must not reach ASSETS`);
     const body = await response.text();
     assert(!/cobros|billing|payment|pago|finanz/i.test(body), `${pathname} response reveals private purpose`);
-    if (pathname.toLowerCase().includes('/api') || pathname.toLowerCase().startsWith('/%61pi')) {
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
       assert.deepEqual(JSON.parse(body), { error: 'not_found' });
     } else {
       assert.equal(body, 'Not Found');
