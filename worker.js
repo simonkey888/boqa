@@ -129,6 +129,14 @@ function normalizeLegacyHunterPayload(value) {
   return output;
 }
 
+function responseTypeClass(contentType) {
+  const normalized = String(contentType || '').toLowerCase();
+  if (normalized.includes('application/json')) return 'json';
+  if (normalized.includes('text/html')) return 'html';
+  if (normalized.includes('text/plain')) return 'text';
+  return normalized ? 'other' : 'missing';
+}
+
 function hardenedProxyResponse(backendResponse, extraHeaders = {}) {
   const headers = new Headers(backendResponse.headers);
   headers.delete('Transfer-Encoding');
@@ -218,17 +226,26 @@ async function proxyToBackend(request, env) {
         bodyString: '',
       });
       if (!legacyResponse.ok) {
-        return jsonResponse({ error: 'hunter_contract_unavailable' }, 503);
+        return jsonResponse({ error: 'hunter_contract_unavailable' }, 503, {
+          'X-BOQA-Compat-Upstream-Status': String(legacyResponse.status),
+          'X-BOQA-Compat-Upstream-Type': responseTypeClass(legacyResponse.headers.get('content-type')),
+        });
       }
       let legacyPayload;
       try {
         legacyPayload = await legacyResponse.json();
       } catch (_) {
-        return jsonResponse({ error: 'legacy_hunter_contract_invalid' }, 502);
+        return jsonResponse({ error: 'legacy_hunter_contract_invalid' }, 502, {
+          'X-BOQA-Compat-Upstream-Status': String(legacyResponse.status),
+          'X-BOQA-Compat-Upstream-Type': responseTypeClass(legacyResponse.headers.get('content-type')),
+        });
       }
       const normalized = normalizeLegacyHunterPayload(legacyPayload);
       if (!normalized) {
-        return jsonResponse({ error: 'legacy_hunter_contract_invalid' }, 502);
+        return jsonResponse({ error: 'legacy_hunter_contract_invalid' }, 502, {
+          'X-BOQA-Compat-Upstream-Status': String(legacyResponse.status),
+          'X-BOQA-Compat-Upstream-Type': responseTypeClass(legacyResponse.headers.get('content-type')),
+        });
       }
       return jsonResponse(normalized, 200, {
         'X-BOQA-Backend-Contract': 'defensive-status-v1',
