@@ -75,6 +75,9 @@ function hiddenPrivateResponse(pathname) {
     'X-Content-Type-Options': 'nosniff',
     'X-Robots-Tag': 'noindex, nofollow, noarchive',
     'Referrer-Policy': 'no-referrer',
+    'Content-Security-Policy': "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
   };
   if (normalized.startsWith('/api/')) {
     return jsonResponse({ error: 'not_found' }, 404, headers);
