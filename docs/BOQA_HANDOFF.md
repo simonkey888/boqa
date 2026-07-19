@@ -30,10 +30,11 @@ TIMEZONE=America/Argentina/Cordoba
 
 - `BRANCH=fix/boqa-public-private-boundary-v2`
 - `BASE_SHA=ede06de817d607e6717f6ea71f2e40aac68ea7a2`
-- `HEAD_SHA=7469e409d26381b86163d20687e7e5aa4b656d64`
+- `HEAD_SHA=fcf1f4c453cd66a38ed2109e8426bdd81bf36f28`
 - `COMMIT_WORKER=5ae28ec99b63b5892d4e11b128268d9005a5fcc1`
 - `COMMIT_TEST=7469e409d26381b86163d20687e7e5aa4b656d64`
-- `FILES=worker.js; test/test-public-private-boundary.js`
+- `COMMIT_HANDOFF=fcf1f4c453cd66a38ed2109e8426bdd81bf36f28`
+- `FILES=worker.js; test/test-public-private-boundary.js; docs/BOQA_HANDOFF.md`
 - `VALIDATION_STATUS=PENDING_CI`
 - `PRODUCTION_IMPACT=false`
 
@@ -92,7 +93,7 @@ No leer, imprimir ni documentar valores. Los nombres `BOQA_API_KEY` y `BOQA_HMAC
 
 ## Next exact action
 
-1. Crear Draft PR desde `fix/boqa-public-private-boundary-v2` hacia `main` con head esperado `7469e409d26381b86163d20687e7e5aa4b656d64`.
+1. Crear Draft PR desde `fix/boqa-public-private-boundary-v2` hacia `main` con head esperado `fcf1f4c453cd66a38ed2109e8426bdd81bf36f28`.
 2. Exigir tests, Docker qualification, browser smoke y preview exacta.
 3. Verificar que rutas y assets privados respondan `404` sin revelar su propósito.
 4. Integrar primero este hardening si CI queda verde.
