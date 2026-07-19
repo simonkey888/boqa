@@ -1,0 +1,118 @@
+name: BOQA Cloudflare Workers Builds Preflight V1
+
+on:
+  push:
+    branches:
+      - deploy/boqa-cloudflare-preview-v4
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-cloudflare-builds-preflight-v1
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+      WORKER_NAME: boqa
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout exact main source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+          persist-credentials: false
+
+      - name: Verify source and inputs
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test -z "$(git status --porcelain)"
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          mkdir -p output/cloudflare-builds-preflight-v1
+          printf '{"source_sha":"%s","read_only":true,"production_changed":false,"deploy_performed":false}\n' "${SOURCE_SHA}" > output/cloudflare-builds-preflight-v1/manifest.json
+
+      - name: Query Worker identity
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          status=$(curl -sS -o /tmp/workers.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "${base}/workers/scripts")
+          echo "WORKERS_SCRIPTS_HTTP=${status}" > output/cloudflare-builds-preflight-v1/http-status.txt
+          test "${status}" = "200"
+          jq -e --arg worker "${WORKER_NAME}" '.success == true and any(.result[]?; .id == $worker)' /tmp/workers.json >/dev/null
+          jq -r --arg worker "${WORKER_NAME}" '.result[] | select(.id == $worker) | {worker_id:.id, worker_tag:.tag}' /tmp/workers.json > output/cloudflare-builds-preflight-v1/worker-identity.json
+          rm -f /tmp/workers.json
+
+      - name: Query Workers Builds API read-only
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          : > output/cloudflare-builds-preflight-v1/builds-api-status.txt
+
+          query() {
+            name="$1"
+            path="$2"
+            status=$(curl -sS -o "/tmp/${name}.json" -w '%{http_code}' \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              "${base}${path}")
+            printf '%s_HTTP=%s\n' "${name}" "${status}" >> output/cloudflare-builds-preflight-v1/builds-api-status.txt
+            jq '{success, errors: [.errors[]? | {code, message}], messages}' "/tmp/${name}.json" > "output/cloudflare-builds-preflight-v1/${name}-summary.json"
+            if [ "${status}" != "200" ]; then
+              return 1
+            fi
+            jq -e '.success == true' "/tmp/${name}.json" >/dev/null
+          }
+
+          query account-limits "/builds/account/limits" || {
+            echo 'REQUIRED_PERMISSION=Workers CI Read or Workers Builds Configuration Read' > output/cloudflare-builds-preflight-v1/blocker.txt
+            exit 78
+          }
+
+          query build-tokens "/builds/tokens" || {
+            echo 'REQUIRED_PERMISSION=Workers CI Read or Workers Builds Configuration Read' > output/cloudflare-builds-preflight-v1/blocker.txt
+            exit 78
+          }
+
+          worker_tag=$(jq -r '.worker_tag' output/cloudflare-builds-preflight-v1/worker-identity.json)
+          test -n "${worker_tag}" && test "${worker_tag}" != "null"
+          query worker-builds "/builds/workers/${worker_tag}/builds?page=1&per_page=5" || {
+            echo 'REQUIRED_PERMISSION=Workers CI Read or Workers Builds Configuration Read' > output/cloudflare-builds-preflight-v1/blocker.txt
+            exit 78
+          }
+
+          jq '{success, result: {has_reached_build_minutes_limit: .result.has_reached_build_minutes_limit, build_minutes_refresh_on: .result.build_minutes_refresh_on}}' /tmp/account-limits.json > output/cloudflare-builds-preflight-v1/account-limits.json
+          jq '{success, token_count: ((.result // []) | length)}' /tmp/build-tokens.json > output/cloudflare-builds-preflight-v1/build-tokens.json
+          jq '{success, build_count: ((.result // []) | length), builds: [(.result // [])[] | {build_uuid, build_outcome, created_on, stopped_on}]}' /tmp/worker-builds.json > output/cloudflare-builds-preflight-v1/worker-builds.json
+          rm -f /tmp/account-limits.json /tmp/build-tokens.json /tmp/worker-builds.json
+          printf '%s\n' 'CLOUDFLARE_WORKERS_BUILDS_READ_PREFLIGHT=PASS' > output/cloudflare-builds-preflight-v1/result.txt
+
+      - name: Verify evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/cloudflare-builds-preflight-v1
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload preflight evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-builds-preflight-v1-${{ env.SOURCE_SHA }}
+          path: output/cloudflare-builds-preflight-v1/
+          if-no-files-found: error
+          retention-days: 14
