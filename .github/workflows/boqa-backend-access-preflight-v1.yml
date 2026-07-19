@@ -1,0 +1,97 @@
+name: BOQA Backend Access Preflight V1
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    if: github.head_ref == 'deploy/boqa-backend-access-preflight-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      BOQA_BACKEND_HOST: ${{ secrets.BOQA_BACKEND_HOST }}
+      BOQA_BACKEND_USER: ${{ secrets.BOQA_BACKEND_USER }}
+      BOQA_BACKEND_SSH_KEY: ${{ secrets.BOQA_BACKEND_SSH_KEY }}
+      BOQA_BACKEND_PORT: ${{ secrets.BOQA_BACKEND_PORT }}
+      BOQA_SSH_HOST: ${{ secrets.BOQA_SSH_HOST }}
+      BOQA_SSH_USER: ${{ secrets.BOQA_SSH_USER }}
+      BOQA_SSH_PRIVATE_KEY: ${{ secrets.BOQA_SSH_PRIVATE_KEY }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      BOQA_API_KEY: ${{ secrets.BOQA_API_KEY }}
+      BOQA_HMAC_SECRET: ${{ secrets.BOQA_HMAC_SECRET }}
+      BOQA_BILLING_PIN: ${{ secrets.BOQA_BILLING_PIN }}
+      DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+      OCI_REGISTRY: ${{ secrets.OCI_REGISTRY }}
+      OCI_USERNAME: ${{ secrets.OCI_USERNAME }}
+      OCI_PASSWORD: ${{ secrets.OCI_PASSWORD }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+    steps:
+      - name: Inventory configured secret names without values
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/backend-access-preflight
+          node <<'NODE'
+          const fs = require('fs');
+          const groups = {
+            canonical_ssh: ['BOQA_BACKEND_HOST', 'BOQA_BACKEND_USER', 'BOQA_BACKEND_SSH_KEY'],
+            boqa_ssh_alias: ['BOQA_SSH_HOST', 'BOQA_SSH_USER', 'BOQA_SSH_PRIVATE_KEY'],
+            generic_ssh: ['SSH_HOST', 'SSH_USER', 'SSH_PRIVATE_KEY'],
+            deploy_ssh: ['DEPLOY_HOST', 'DEPLOY_USER', 'DEPLOY_SSH_KEY'],
+            server_ssh: ['SERVER_HOST', 'SERVER_USER', 'SERVER_SSH_KEY'],
+            backend_runtime: ['BOQA_API_KEY', 'BOQA_HMAC_SECRET', 'BOQA_BILLING_PIN'],
+            registry: ['OCI_REGISTRY', 'OCI_USERNAME', 'OCI_PASSWORD'],
+            registry_token: ['GHCR_TOKEN'],
+            legacy_dashboard: ['DASHBOARD_PASSWORD'],
+            optional_ports: ['BOQA_BACKEND_PORT', 'SSH_PORT'],
+          };
+          const present = (name) => Boolean(process.env[name]);
+          const result = { schema_version: 1, values_exposed: false, groups: {} };
+          for (const [group, names] of Object.entries(groups)) {
+            result.groups[group] = {
+              configured_names: names.filter(present),
+              missing_names: names.filter((name) => !present(name)),
+              complete: names.every(present),
+            };
+          }
+          const sshOptions = ['canonical_ssh', 'boqa_ssh_alias', 'generic_ssh', 'deploy_ssh', 'server_ssh'];
+          result.effective = {
+            ssh_group: sshOptions.find((name) => result.groups[name].complete) || null,
+            backend_runtime_complete: result.groups.backend_runtime.complete,
+            registry_group: result.groups.registry.complete ? 'registry' : (result.groups.registry_token.complete ? 'registry_token' : null),
+            dashboard_password_present_but_not_consumed_by_backend: present('DASHBOARD_PASSWORD'),
+          };
+          result.ready_for_non_mutating_ssh_preflight = Boolean(result.effective.ssh_group);
+          fs.writeFileSync('output/backend-access-preflight/inventory.json', JSON.stringify(result, null, 2));
+          console.log(`SSH_GROUP=${result.effective.ssh_group || 'NONE'}`);
+          console.log(`BACKEND_RUNTIME_SECRETS=${result.effective.backend_runtime_complete ? 'COMPLETE' : 'INCOMPLETE'}`);
+          console.log(`REGISTRY_ACCESS=${result.effective.registry_group || 'NONE'}`);
+          console.log(`DASHBOARD_PASSWORD_PRESENT=${present('DASHBOARD_PASSWORD')}`);
+          NODE
+
+      - name: Verify evidence checksum
+        run: |
+          cd output/backend-access-preflight
+          sha256sum inventory.json > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload redacted preflight evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-access-preflight-v1
+          path: output/backend-access-preflight/
+          if-no-files-found: error
+          retention-days: 7
