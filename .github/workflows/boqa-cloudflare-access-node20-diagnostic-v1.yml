@@ -1,0 +1,60 @@
+name: BOQA Cloudflare Access Node20 Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-node20:
+    if: github.head_ref == 'deploy/boqa-cloudflare-preview-v2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: "true"
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "20"
+      - name: Run redacted access diagnostic
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/cloudflare-access-node20
+          node --version > output/cloudflare-access-node20/node-version.txt
+          set +e
+          npx --yes wrangler@4.112.0 whoami > output/cloudflare-access-node20/whoami.txt 2> output/cloudflare-access-node20/error.txt
+          status=$?
+          set -e
+          printf '%s\n' "EXIT_CODE=${status}" > output/cloudflare-access-node20/result.txt
+          if [ -s output/cloudflare-access-node20/error.txt ]; then
+            sed -E 's/(Bearer|token|Token|TOKEN)[=: ]+[^ ]+/\1=[REDACTED]/g' output/cloudflare-access-node20/error.txt > output/cloudflare-access-node20/error-redacted.txt
+          else
+            : > output/cloudflare-access-node20/error-redacted.txt
+          fi
+          rm -f output/cloudflare-access-node20/error.txt
+          cat output/cloudflare-access-node20/result.txt
+          cat output/cloudflare-access-node20/error-redacted.txt
+          exit "$status"
+      - name: Generate checksums
+        if: always()
+        run: |
+          cd output/cloudflare-access-node20
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-access-node20-diagnostic
+          path: output/cloudflare-access-node20/
+          if-no-files-found: error
+          retention-days: 7
