@@ -17,7 +17,13 @@ if (start < 0 || end < 0 || end <= start) {
 const replacement = String.raw`async function privateSmoke(browser) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
-  const result = { page_errors: [], console_errors: [], expected_auth_console_errors: [], paths: [] };
+  const result = {
+    page_errors: [],
+    console_errors: [],
+    expected_auth_console_errors: [],
+    expected_concealment_console_errors: [],
+    paths: [],
+  };
   wireDiagnostics(page, result);
 
   const privatePaths = [
@@ -81,8 +87,13 @@ const replacement = String.raw`async function privateSmoke(browser) {
   assert(!/centro de cobros|movimientos|saldo|monto|ingreso|billing|payment|pago|finanz/i.test(anonymousText), 'PRIVATE_LABEL_LEAKED_AT_PUBLIC_EDGE');
   await page.screenshot({ path: path.join(OUTPUT, 'private-anonymous-mobile.png'), fullPage: true });
 
+  const expected404 = /^Failed to load resource: the server responded with a status of 404 \(Not Found\)$/;
+  result.expected_concealment_console_errors = result.console_errors.filter((text) => expected404.test(text));
+  result.console_errors = result.console_errors.filter((text) => !expected404.test(text));
+
   assert.equal(result.page_errors.length, 0, 'PRIVATE_PAGEERROR:' + result.page_errors.join('|'));
   assert.equal(result.console_errors.length, 0, 'PRIVATE_CRITICAL_CONSOLE:' + result.console_errors.join('|'));
+  assert(result.expected_concealment_console_errors.length >= 1, 'EXPECTED_CONCEALMENT_CONSOLE_EVENT_MISSING');
   result.public_edge_concealed = true;
   result.authenticated = false;
   result.backend_private_module_exercised_by_browser = false;
