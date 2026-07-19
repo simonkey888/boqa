@@ -225,7 +225,9 @@ async function run() {
   assert.match(billingSource, /no-store, max-age=0/);
   assert.match(billingSource, /Clear-Site-Data/);
   assert.match(server, /app\.post\('\/api\/private\/billing\/logout', billingAuth\.logout\)/);
-  assert.match(worker, /pathname === '\/cobros\.html'/);
+  assert.match(worker, /function isPrivateSurface\(pathname\)/);
+  assert.match(worker, /normalized\.endsWith\('\/cobros\.html'\)/);
+  assert.match(worker, /if \(isPrivateSurface\(url\.pathname\)\)/);
   assert.match(worker, /Content-Security-Policy/);
   assert.match(worker, /X-Robots-Tag/);
 
