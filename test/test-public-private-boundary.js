@@ -7,15 +7,28 @@ const html = fs.readFileSync(path.join(root, 'dashboard/index.html'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'dashboard/app.js'), 'utf8');
 const worker = fs.readFileSync(path.join(root, 'worker.js'), 'utf8');
 const all = html + app;
+
 assert(!all.includes('Centro de Cobros'));
 assert(!all.includes('/cobros'));
 assert(!/portfolio|bount|finanz|pago|ingreso/i.test(all));
 assert(!app.includes('/api/private/'));
 assert(!html.includes('fonts.googleapis'));
-assert(worker.includes('isPrivateBilling'));
+
+assert(worker.includes('function isPrivateSurface(pathname)'));
+assert(worker.includes('function hiddenPrivateResponse(pathname)'));
+assert(worker.includes("normalized.startsWith('/api/private/billing/')"));
+assert(worker.includes("normalized.endsWith('/cobros.html')"));
+assert(worker.includes("normalized.endsWith('/cobros.js')"));
+assert(worker.includes("normalized.endsWith('/private.css')"));
+assert(worker.includes('decodeURIComponent(decoded)'));
+assert(worker.includes('if (isPrivateSurface(url.pathname))'));
+assert(worker.includes('return hiddenPrivateResponse(url.pathname)'));
 assert(worker.includes("error: 'not_found'"));
+assert(worker.includes("'X-Robots-Tag': 'noindex, nofollow, noarchive'"));
 assert(worker.includes("'Cache-Control': 'no-store, max-age=0'"));
-assert(worker.includes("pathname.startsWith('/api/private/billing/')"));
+assert(!worker.includes('isPrivateBilling'));
+assert(worker.indexOf('if (isPrivateSurface(url.pathname))') < worker.indexOf('if (env && env.ASSETS)'));
+
 assert(!/DEMO_BUGS|DEMO_COVERAGE|DEMO_FINDINGS|DEMO_HEALTH|demoJsonEvidence/.test(worker));
 assert(!fs.readFileSync(path.join(root, '.env.example'), 'utf8').includes('BOQA_BILLING_PIN'));
 console.log('public/private boundary: PASS');
