@@ -8,6 +8,7 @@
   <meta name="description" content="BOQA — estado verificable del hunter defensivo.">
   <title>BOQA Hunter</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/mobile.css">
   <script src="/dashboard-state.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
@@ -29,7 +30,7 @@
         <p class="lede">Datos públicos verificables. <strong>N/D</strong> si falta una fuente; <strong>STALE</strong> si perdió vigencia.</p>
       </div>
       <dl class="hero-meta">
-        <div><dt>Vista</dt><dd id="overall-reason">awaiting_required_sources</dd></div>
+        <div><dt>Vista</dt><dd id="overall-reason">Esperando fuentes requeridas</dd></div>
         <div><dt>Actualizado</dt><dd id="dashboard-updated">N/D</dd></div>
       </dl>
     </section>
@@ -58,7 +59,7 @@
           <div><dt>Fuente</dt><dd id="hunter-source">/api/hunter/status</dd></div>
           <div><dt>Timestamp fuente</dt><dd id="hunter-timestamp">N/D</dd></div>
           <div><dt>Recibido</dt><dd id="hunter-received">N/D</dd></div>
-          <div><dt>Motivo</dt><dd id="hunter-reason">awaiting_first_response</dd></div>
+          <div><dt>Motivo</dt><dd id="hunter-reason">Esperando primera respuesta</dd></div>
         </dl>
       </article>
       <article class="source-card">
@@ -67,7 +68,7 @@
           <div><dt>Fuente</dt><dd id="health-source">/api/health</dd></div>
           <div><dt>Timestamp fuente</dt><dd id="health-timestamp">N/D</dd></div>
           <div><dt>Recibido</dt><dd id="health-received">N/D</dd></div>
-          <div><dt>Motivo</dt><dd id="health-reason">awaiting_first_response</dd></div>
+          <div><dt>Motivo</dt><dd id="health-reason">Esperando primera respuesta</dd></div>
         </dl>
       </article>
     </section>
@@ -100,15 +101,15 @@
       </article>
 
       <article class="panel unavailable-panel" aria-labelledby="findings-title">
-        <header><p>Fuente requerida: API de findings normalizada</p><h2 id="findings-title">Findings</h2></header>
+        <header><p>Contrato público no disponible</p><h2 id="findings-title">Hallazgos</h2></header>
         <strong>N/D</strong>
-        <p>El contrato público actual no expone un resumen normalizado. BOQA no deriva ni inventa el valor.</p>
+        <p>Sin un resumen público verificable.</p>
       </article>
 
       <article class="panel unavailable-panel" aria-labelledby="qualification-title">
-        <header><p>Fuente requerida: evidencia de qualification publicada</p><h2 id="qualification-title">Lab qualification</h2></header>
+        <header><p>Evidencia no publicada</p><h2 id="qualification-title">Validación de laboratorio</h2></header>
         <strong>N/D</strong>
-        <p>La evidencia de CI no se presenta como estado productivo sin un contrato público verificable.</p>
+        <p>CI no se presenta como estado productivo.</p>
       </article>
     </section>
   </main>

@@ -6,7 +6,36 @@ const Module = require('module');
 const path = require('path');
 
 const originalPath = path.join(__dirname, 'browser-smoke-v1.js');
-const source = fs.readFileSync(originalPath, 'utf8');
+const originalSource = fs.readFileSync(originalPath, 'utf8');
+const source = originalSource
+  .replace(
+    "['/style.css', 'dashboard/style.css'],",
+    "['/style.css', 'dashboard/style.css'],\n    ['/mobile.css', 'dashboard/mobile.css'],",
+  )
+  .replace(
+    "assert.equal(await page.locator('#overall-state').getAttribute('data-state'), 'FRESH');",
+    `assert.equal(await page.locator('#overall-state').getAttribute('data-state'), 'FRESH');
+  assert.equal(await page.locator('#overall-reason').textContent(), 'Todas las fuentes están actualizadas');
+  assert.equal(await page.locator('#hunter-reason').textContent(), 'Contrato válido y actualizado');
+  assert.equal(await page.locator('#health-reason').textContent(), 'Contrato válido y actualizado');
+  const releaseText = await page.locator('#health-release').textContent();
+  const releaseTitle = await page.locator('#health-release').getAttribute('title');
+  assert.match(releaseText, /^[a-f0-9]{10}…[a-f0-9]{6}$/i, label + ':RELEASE_NOT_ABBREVIATED');
+  assert.match(releaseTitle || '', /^[a-f0-9]{40}$/i, label + ':FULL_RELEASE_NOT_ACCESSIBLE');
+  if (viewport.width <= 520) {
+    const sourceBoxes = await page.locator('.source-card').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect()));
+    const unavailableBoxes = await page.locator('.unavailable-panel').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect()));
+    assert.equal(sourceBoxes.length, 2, label + ':SOURCE_CARD_COUNT');
+    assert.equal(unavailableBoxes.length, 2, label + ':UNAVAILABLE_PANEL_COUNT');
+    assert(Math.abs(sourceBoxes[0].top - sourceBoxes[1].top) < 2, label + ':SOURCE_CARDS_NOT_COMPACT');
+    assert(Math.abs(unavailableBoxes[0].top - unavailableBoxes[1].top) < 2, label + ':SECONDARY_PANELS_NOT_COMPACT');
+  }`,
+  );
+
+if (source === originalSource) {
+  throw new Error('BROWSER_SMOKE_MOBILE_TRANSFORM_NOT_APPLIED');
+}
+
 const start = source.indexOf('async function privateSmoke(');
 const end = source.indexOf('\nasync function main()', start);
 
@@ -106,9 +135,6 @@ const replacement = String.raw`async function privateSmoke(browser) {
   assert(!/centro de cobros|movimientos|saldo|monto|ingreso|billing|payment|pago|finanz/i.test(anonymousText), 'PRIVATE_LABEL_LEAKED_AT_PUBLIC_EDGE');
   await page.screenshot({ path: path.join(OUTPUT, 'private-anonymous-mobile.png'), fullPage: true });
 
-  // Chromium reports an expected main-document 404 as a console error. Drain the
-  // event queue, classify only that concealment signal, and keep every other
-  // console error fatal.
   await page.waitForTimeout(150);
   const isExpectedConcealment404 = (text) =>
     String(text).includes('Failed to load resource') &&

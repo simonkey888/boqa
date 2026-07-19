@@ -1,72 +1,70 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-19T14:35:00-03:00  
+LAST_VERIFIED_AT=2026-07-19T14:49:00-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
 ## Estado verificado
 
 - `REPOSITORY=simonkey888/boqa`
-- `MAIN_SHA=ede06de817d607e6717f6ea71f2e40aac68ea7a2`
+- `MAIN_SHA=9570a9fdfb577c92c172f520cf2489d54fc4956b`
+- `LAST_MERGED_PR=PR #22`
 - `PRODUCTION_SHA=INDETERMINADO`
-- Producción no fue modificada durante PR #22.
+- Producción no fue modificada por PR #22 ni PR #23.
 
-## PR #22 — hardening del borde público
+## Frontera pública integrada
 
-- `BRANCH=fix/boqa-public-private-boundary-v2`
-- `BASE_SHA=ede06de817d607e6717f6ea71f2e40aac68ea7a2`
-- `VALIDATED_CODE_SHA=a6cbe7fb44133a1340fc976fd257f1229c0bd699`
-- Este documento es un descendiente documental del SHA validado; verificar el HEAD remoto antes del merge.
+El Worker público oculta la superficie privada antes del proxy y de los assets. La API pública queda limitada a `GET /api/health` y `GET /api/hunter/status`; cualquier otra API responde `404` genérico y no llega al backend.
 
-El Worker público oculta la superficie privada antes del proxy y de los assets. Páginas, archivos y rutas privadas responden `404` genérico con política de no almacenamiento, incluso con mayúsculas, separadores alternativos y codificación múltiple.
+## PR #23 — mobile clarity v2
 
-La superficie API pública queda limitada a:
+- `BRANCH=fix/boqa-mobile-clarity-v2`
+- `BASE_SHA=9570a9fdfb577c92c172f520cf2489d54fc4956b`
+- `VALIDATED_CODE_SHA=b9fde58a2cd0d2da18601476ef38364aaa5538cc`
+- `STATE=OPEN_DRAFT`
+- Este archivo es un descendiente documental del SHA validado; verificar el HEAD remoto antes del merge.
 
-- `GET /api/health`
-- `GET /api/hunter/status`
+Cambios validados:
 
-Cualquier otra API responde `404` genérico y no llega al backend.
+1. códigos internos traducidos a textos legibles;
+2. timestamps compactos y deterministas en formato `es-AR`, con valor ISO accesible;
+3. SHA visible abreviado, con valor completo en metadata accesible;
+4. fuentes y paneles secundarios compactados en dos columnas para 360/390 px;
+5. fallback de una columna para pantallas menores a 340 px;
+6. copy de estados no disponibles simplificado sin inventar datos.
 
-## Evidencia
+### Evidencia
 
-- `BROWSER_RUN=29697008338` — SUCCESS
-- `BROWSER_ARTIFACT_ID=8445303463`
-- `BROWSER_DIGEST=sha256:187d4ca4724344270714cbee90d11bb15d705066a0ba100347073d3423fa8472`
-- `DOCKER_RUN=29697008393` — SUCCESS
-- `DOCKER_ARTIFACT_ID=8445311730`
-- `DOCKER_DIGEST=sha256:457d9431d93115e2bc713db4bcf2d442945b6230bc7bf80d995c567c6f394dfe`
+- `BROWSER_RUN=29697489537` — SUCCESS
+- `BROWSER_ARTIFACT_ID=8445437653`
+- `BROWSER_DIGEST=sha256:2b5e266c2bea4c86300e7aefe8b39af726c088d8b0f0fbadc1e1cc0a2f0182ae`
+- `DOCKER_RUN=29697489554` — SUCCESS
+- `DOCKER_ARTIFACT_ID=8445444723`
+- `DOCKER_DIGEST=sha256:aa053fefe767869d7c0063c401d9ce36da174d1a198a54640a9368f8f6068b51`
 
 Browser smoke sobre el SHA validado:
 
 - desktop 1440: PASS;
 - mobile 390: PASS;
 - mobile 360: PASS;
-- estado FRESH;
+- texto humano y SHA accesible: PASS;
+- compactación mobile: PASS;
 - overflow horizontal: 0;
 - errores de página: 0;
 - errores críticos de consola: 0;
-- rutas ocultas: 404 opaco;
+- rutas privadas y operativas ocultas: PASS;
 - deploy realizado: false.
 
 Docker qualification sobre el mismo SHA:
 
-- instalación y sintaxis: PASS;
-- suite completa: PASS;
+- instalación, sintaxis y suite completa: PASS;
 - integridad del diff: PASS;
 - identidad y arranque de imagen: PASS;
 - ejecución aislada final: PASS.
 
-## Revisión mobile
-
-La interfaz es funcional y legible en 390 y 360 px. El pulido se hará en una rama separada para no mezclar UI con seguridad:
-
-1. traducir códigos internos a texto humano;
-2. abreviar el SHA visible conservando el valor completo de forma accesible;
-3. reducir densidad vertical sin modificar contratos.
-
 ## Cloudflare y backend
 
-- La configuración actual de Workers Builds es preview-only y no posee trigger productivo.
-- PR #20 debe reconstruirse sobre el `main` final.
+- Workers Builds permanece preview-only, sin trigger productivo.
+- PR #20 debe reconstruirse sobre el `main` posterior a PR #23.
 - La versión exacta validada debe promoverse sin recompilar.
 - PR #19 continúa bloqueado por falta de acceso remoto al host del backend.
 - Cloudflare no sustituye el runtime que ejecuta Node, Playwright y Docker.
@@ -82,9 +80,8 @@ La interfaz es funcional y legible en 390 y 360 px. El pulido se hará en una ra
 
 ## Siguiente acción exacta
 
-1. Exigir los dos gates verdes sobre este commit documental.
-2. Verificar HEAD y mergeabilidad de PR #22.
-3. Integrar PR #22 sólo con SHA esperado.
-4. Ejecutar el pulido mobile en una rama separada y validarlo.
-5. Reconstruir preview y preflight sobre el `main` final.
-6. Promover sólo la versión exacta validada y verificar producción más rollback.
+1. Exigir Browser Smoke y Docker Qualification verdes sobre este commit documental.
+2. Verificar HEAD y mergeabilidad de PR #23.
+3. Integrar PR #23 sólo con SHA esperado.
+4. Reconstruir la preview Cloudflare y el preflight backend sobre el nuevo `main`.
+5. Promover sólo la versión exacta validada y verificar producción más rollback.

@@ -8,12 +8,54 @@
   const ENDPOINTS = Object.freeze({ hunter: '/api/hunter/status', health: '/api/health' });
   const POLL_MS = 15_000;
   const MAX_AGE_MS = 90_000;
+  const REASON_LABELS = Object.freeze({
+    awaiting_first_response: 'Esperando primera respuesta',
+    awaiting_required_sources: 'Esperando fuentes requeridas',
+    contract_valid_and_fresh: 'Contrato válido y actualizado',
+    source_timestamp_stale: 'Timestamp de fuente vencido',
+    hunter_freshness_contract_stale: 'Señal del hunter vencida',
+    health_status_degraded: 'Health degradado',
+    all_required_sources_unavailable: 'Fuentes requeridas no disponibles',
+    explicit_degraded_contract: 'Contrato degradado',
+    required_source_stale: 'Una fuente requerida está vencida',
+    partial_source_unavailable: 'Una fuente requerida no está disponible',
+    required_contract_incomplete_or_invalid: 'Contrato requerido incompleto o inválido',
+    all_required_sources_fresh: 'Todas las fuentes están actualizadas',
+    state_combination_not_defined: 'Combinación de estados no definida',
+    hunter_payload_not_object: 'Respuesta del hunter inválida',
+    hunter_state_invalid_or_missing: 'Estado del hunter inválido o ausente',
+    hunter_timestamp_invalid_or_missing: 'Timestamp del hunter inválido o ausente',
+    hunter_freshness_invalid: 'Contrato de frescura del hunter inválido',
+    health_payload_not_object: 'Respuesta de health inválida',
+    health_status_invalid_or_missing: 'Estado de health inválido o ausente',
+    health_timestamp_invalid_or_missing: 'Timestamp de health inválido o ausente',
+    network_error: 'Error de red',
+    timeout: 'Tiempo de espera agotado',
+    invalid_json: 'Respuesta JSON inválida',
+    non_success_response: 'Respuesta HTTP no exitosa',
+  });
   let model = State.createInitialModel();
   let polling = false;
   let timer = null;
 
   function text(value) {
     return value === null || value === undefined || value === '' ? 'N/D' : String(value);
+  }
+
+  function sentence(value) {
+    const source = text(value);
+    if (source === 'N/D') return source;
+    const normalized = source.replace(/[_-]+/g, ' ').trim();
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
+  function reasonText(value) {
+    const key = value === null || value === undefined ? '' : String(value);
+    if (!key) return 'N/D';
+    if (REASON_LABELS[key]) return REASON_LABELS[key];
+    if (key.startsWith('hunter_state_')) return `Hunter ${sentence(key.slice('hunter_state_'.length)).toLowerCase()}`;
+    if (/^http_\d{3}$/.test(key)) return `Respuesta HTTP ${key.slice(5)}`;
+    return sentence(key);
   }
 
   function parseTime(value) {
@@ -23,13 +65,51 @@
 
   function formatIso(value) {
     const parsed = parseTime(value);
-    return Number.isFinite(parsed) ? new Date(parsed).toLocaleString() : 'N/D';
+    if (!Number.isFinite(parsed)) return 'N/D';
+    return new Intl.DateTimeFormat('es-AR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).format(new Date(parsed));
+  }
+
+  function renderTime(node, value) {
+    const parsed = parseTime(value);
+    node.textContent = formatIso(value);
+    if (Number.isFinite(parsed)) {
+      const iso = new Date(parsed).toISOString();
+      node.title = iso;
+      node.setAttribute('aria-label', iso);
+    } else {
+      node.removeAttribute('title');
+      node.removeAttribute('aria-label');
+    }
   }
 
   function formatDuration(value) {
     if (!Number.isFinite(value)) return 'N/D';
     if (value < 1_000) return `${value} ms`;
-    return `${(value / 1_000).toFixed(1)} s`;
+    if (value < 60_000) return `${(value / 1_000).toFixed(1)} s`;
+    const minutes = Math.floor(value / 60_000);
+    const seconds = Math.floor((value % 60_000) / 1_000);
+    return `${minutes} min ${seconds} s`;
+  }
+
+  function renderRelease(node, value) {
+    const release = text(value);
+    if (/^[a-f0-9]{40}$/i.test(release)) {
+      node.textContent = `${release.slice(0, 10)}…${release.slice(-6)}`;
+      node.title = release;
+      node.setAttribute('aria-label', `Release completa: ${release}`);
+      return;
+    }
+    node.textContent = release;
+    node.removeAttribute('title');
+    node.removeAttribute('aria-label');
   }
 
   function setState(node, state) {
@@ -40,9 +120,9 @@
   function renderSource(name, source) {
     setState($(`${name}-view-state`), source.view_state);
     $(`${name}-source`).textContent = source.endpoint;
-    $(`${name}-timestamp`).textContent = formatIso(source.source_timestamp);
-    $(`${name}-received`).textContent = formatIso(source.received_at);
-    $(`${name}-reason`).textContent = text(source.reason);
+    renderTime($(`${name}-timestamp`), source.source_timestamp);
+    renderTime($(`${name}-received`), source.received_at);
+    $(`${name}-reason`).textContent = reasonText(source.reason);
   }
 
   function cycleIsRunning(payload) {
@@ -113,8 +193,8 @@
     model = next;
     document.body.dataset.viewState = next.overall.view_state;
     setState($('overall-state'), next.overall.view_state);
-    $('overall-reason').textContent = text(next.overall.reason);
-    $('dashboard-updated').textContent = formatIso(next.updated_at);
+    $('overall-reason').textContent = reasonText(next.overall.reason);
+    renderTime($('dashboard-updated'), next.updated_at);
 
     const hunter = next.sources.hunter;
     const health = next.sources.health;
@@ -123,14 +203,14 @@
     renderHuntLive(hunter);
 
     $('hunter-state').textContent = text(hunter.payload && hunter.payload.state);
-    $('heartbeat-at').textContent = formatIso(hunter.payload && hunter.payload.heartbeat_at);
-    $('last-started-at').textContent = formatIso(hunter.payload && hunter.payload.last_started_at);
-    $('last-completed-at').textContent = formatIso(hunter.payload && hunter.payload.last_completed_at);
-    $('next-scheduled-at').textContent = formatIso(hunter.payload && hunter.payload.next_scheduled_at);
+    renderTime($('heartbeat-at'), hunter.payload && hunter.payload.heartbeat_at);
+    renderTime($('last-started-at'), hunter.payload && hunter.payload.last_started_at);
+    renderTime($('last-completed-at'), hunter.payload && hunter.payload.last_completed_at);
+    renderTime($('next-scheduled-at'), hunter.payload && hunter.payload.next_scheduled_at);
 
     $('health-status').textContent = text(health.payload && health.payload.status);
     $('health-version').textContent = text(health.payload && health.payload.version);
-    $('health-release').textContent = text(health.payload && health.payload.release_sha);
+    renderRelease($('health-release'), health.payload && health.payload.release_sha);
     $('health-uptime').textContent = formatDuration(health.payload && health.payload.process_uptime_ms);
 
     const changed = $('release-change');
