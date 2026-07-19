@@ -1,87 +1,60 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-19T14:49:00-03:00  
+LAST_VERIFIED_AT=2026-07-19T14:58:00-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
 ## Estado verificado
 
 - `REPOSITORY=simonkey888/boqa`
-- `MAIN_SHA=9570a9fdfb577c92c172f520cf2489d54fc4956b`
-- `LAST_MERGED_PR=PR #22`
+- `MAIN_SHA=bc6f45acefe693f3cc2940d91f715d11ee50da93`
+- `LAST_MERGED_PR=PR #23`
 - `PRODUCTION_SHA=INDETERMINADO`
 - Producción no fue modificada por PR #22 ni PR #23.
 
-## Frontera pública integrada
+## Producto integrado
 
-El Worker público oculta la superficie privada antes del proxy y de los assets. La API pública queda limitada a `GET /api/health` y `GET /api/hunter/status`; cualquier otra API responde `404` genérico y no llega al backend.
+- Frontera privada oculta en el Worker público.
+- API pública limitada a `GET /api/health` y `GET /api/hunter/status`.
+- Dashboard validado en desktop 1440, mobile 390 y mobile 360.
+- Browser y Docker finales de PR #23: SUCCESS.
 
-## PR #23 — mobile clarity v2
+## Flujo activo — Cloudflare preview v5
 
-- `BRANCH=fix/boqa-mobile-clarity-v2`
-- `BASE_SHA=9570a9fdfb577c92c172f520cf2489d54fc4956b`
-- `VALIDATED_CODE_SHA=b9fde58a2cd0d2da18601476ef38364aaa5538cc`
-- `STATE=OPEN_DRAFT`
-- Este archivo es un descendiente documental del SHA validado; verificar el HEAD remoto antes del merge.
+- `BRANCH=deploy/boqa-cloudflare-preview-v5`
+- `BASE_SHA=bc6f45acefe693f3cc2940d91f715d11ee50da93`
+- `STATUS=IN_PROGRESS`
+- Workers Builds debe permanecer preview-only.
+- Trigger productivo permitido: 0.
+- El build de validación debe fijarse a rama y SHA exactos mediante Builds API.
+- La nueva versión debe identificarse, obtener preview URL y probarse sin modificar el deployment activo.
+- Deployment y distribución de tráfico antes/después deben coincidir exactamente.
 
-Cambios validados:
+## Arquitectura de entrega decidida
 
-1. códigos internos traducidos a textos legibles;
-2. timestamps compactos y deterministas en formato `es-AR`, con valor ISO accesible;
-3. SHA visible abreviado, con valor completo en metadata accesible;
-4. fuentes y paneles secundarios compactados en dos columnas para 360/390 px;
-5. fallback de una columna para pantallas menores a 340 px;
-6. copy de estados no disponibles simplificado sin inventar datos.
+1. GitHub conserva código, PR, tests, Docker y browser smoke.
+2. Cloudflare Workers Builds ejecuta un build API fijado al commit exacto.
+3. `wrangler versions upload` crea una versión sin promover tráfico.
+4. La preview versionada se valida en desktop, mobile, APIs y rutas ocultas.
+5. La promoción final reutiliza la versión exacta validada; no recompila.
+6. Rollback conserva la versión productiva anterior y se verifica antes de promover.
 
-### Evidencia
+## Backend
 
-- `BROWSER_RUN=29697489537` — SUCCESS
-- `BROWSER_ARTIFACT_ID=8445437653`
-- `BROWSER_DIGEST=sha256:2b5e266c2bea4c86300e7aefe8b39af726c088d8b0f0fbadc1e1cc0a2f0182ae`
-- `DOCKER_RUN=29697489554` — SUCCESS
-- `DOCKER_ARTIFACT_ID=8445444723`
-- `DOCKER_DIGEST=sha256:aa053fefe767869d7c0063c401d9ce36da174d1a198a54640a9368f8f6068b51`
-
-Browser smoke sobre el SHA validado:
-
-- desktop 1440: PASS;
-- mobile 390: PASS;
-- mobile 360: PASS;
-- texto humano y SHA accesible: PASS;
-- compactación mobile: PASS;
-- overflow horizontal: 0;
-- errores de página: 0;
-- errores críticos de consola: 0;
-- rutas privadas y operativas ocultas: PASS;
-- deploy realizado: false.
-
-Docker qualification sobre el mismo SHA:
-
-- instalación, sintaxis y suite completa: PASS;
-- integridad del diff: PASS;
-- identidad y arranque de imagen: PASS;
-- ejecución aislada final: PASS.
-
-## Cloudflare y backend
-
-- Workers Builds permanece preview-only, sin trigger productivo.
-- PR #20 debe reconstruirse sobre el `main` posterior a PR #23.
-- La versión exacta validada debe promoverse sin recompilar.
-- PR #19 continúa bloqueado por falta de acceso remoto al host del backend.
-- Cloudflare no sustituye el runtime que ejecuta Node, Playwright y Docker.
+- PR #19 histórico continúa basado en un `main` obsoleto.
+- Debe reconstruirse sobre el `main` final.
+- El complemento de Cloudflare no sustituye el acceso al runtime que ejecuta Node, Playwright y Docker.
+- Sin acceso remoto efectivo, el deploy backend permanece bloqueado y no se puede declarar readiness productiva.
 
 ## Reglas permanentes
 
 - No validar infraestructura de terceros.
 - No trabajar directamente sobre `main`.
-- No exponer información privada u operativa innecesaria en la URL pública.
+- No exponer información privada u operativa innecesaria.
+- No imprimir valores sensibles.
 - No confundir CI, preview, versión subida, deployment y producción activa.
 - No declarar producción actualizada sin versión, deployment, tráfico, health, browser smoke y rollback verificados.
 - Mantener sincronizados este archivo y el documento canónico de Drive.
 
 ## Siguiente acción exacta
 
-1. Exigir Browser Smoke y Docker Qualification verdes sobre este commit documental.
-2. Verificar HEAD y mergeabilidad de PR #23.
-3. Integrar PR #23 sólo con SHA esperado.
-4. Reconstruir la preview Cloudflare y el preflight backend sobre el nuevo `main`.
-5. Promover sólo la versión exacta validada y verificar producción más rollback.
+Agregar el workflow preview v5, abrir Draft PR contra `main`, disparar un build Cloudflare exacto para el head del PR, identificar su versión y preview URL, comprobar que producción no cambió y validar la preview completa.
