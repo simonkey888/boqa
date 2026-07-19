@@ -15,7 +15,7 @@
   <a class="skip-link" href="#main">Ir al estado operativo</a>
   <header class="topbar" aria-label="Cabecera principal">
     <a class="brand" href="/" aria-label="BOQA inicio">BOQA</a>
-    <span class="product">Defensive validation control plane</span>
+    <span class="product">Control defensivo verificable</span>
     <div class="overall-pill" aria-live="polite">
       <span id="overall-state" data-state="LOADING">LOADING</span>
     </div>
@@ -24,12 +24,12 @@
   <main id="main">
     <section class="hero" aria-labelledby="hero-title">
       <div>
-        <p class="eyebrow">Browser Observability &amp; Quantification Agent</p>
-        <h1 id="hero-title">Estado real. Sin métricas de relleno.</h1>
-        <p class="lede">Esta vista consume únicamente contratos públicos del backend. Un valor ausente se muestra como <strong>N/D</strong>; una respuesta vencida se muestra como <strong>STALE</strong>.</p>
+        <p class="eyebrow">Estado operativo</p>
+        <h1 id="hero-title">Sin ruido. Sólo estado real.</h1>
+        <p class="lede">Datos públicos verificables. <strong>N/D</strong> si falta una fuente; <strong>STALE</strong> si perdió vigencia.</p>
       </div>
       <dl class="hero-meta">
-        <div><dt>Estado de vista</dt><dd id="overall-reason">awaiting_required_sources</dd></div>
+        <div><dt>Vista</dt><dd id="overall-reason">awaiting_required_sources</dd></div>
         <div><dt>Actualizado</dt><dd id="dashboard-updated">N/D</dd></div>
       </dl>
     </section>
@@ -58,8 +58,8 @@
     </section>
 
     <section id="empty-state" class="empty-state" aria-live="polite">
-      <strong>Esperando contratos reales.</strong>
-      <p>No se muestran ceros ni datos demo mientras las fuentes no respondan con payloads válidos.</p>
+      <strong>Esperando fuentes reales.</strong>
+      <p>BOQA no completa vacíos con ceros ni datos demo.</p>
     </section>
 
     <section id="status-grid" class="status-grid" hidden>
@@ -87,21 +87,20 @@
       <article class="panel unavailable-panel" aria-labelledby="findings-title">
         <header><p>Fuente requerida: API de findings normalizada</p><h2 id="findings-title">Findings</h2></header>
         <strong>N/D</strong>
-        <p>El contrato público actual no expone un resumen normalizado de findings. BOQA no deriva ni inventa este valor.</p>
+        <p>El contrato público actual no expone un resumen normalizado. BOQA no deriva ni inventa el valor.</p>
       </article>
 
       <article class="panel unavailable-panel" aria-labelledby="qualification-title">
         <header><p>Fuente requerida: evidencia de qualification publicada</p><h2 id="qualification-title">Lab qualification</h2></header>
         <strong>N/D</strong>
-        <p>El artifact de CI no se proyecta como estado productivo hasta existir un contrato público verificable.</p>
+        <p>La evidencia de CI no se presenta como estado productivo sin un contrato público verificable.</p>
       </article>
     </section>
   </main>
 
   <footer>
     <span>BOQA</span>
-    <span>Datos: contratos HTTP públicos</span>
-    <span>Polling: 15 s · pausa en segundo plano</span>
+    <span>Contratos HTTP públicos · polling 15 s</span>
   </footer>
 </body>
 </html>
