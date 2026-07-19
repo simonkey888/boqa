@@ -23,6 +23,7 @@ const replacement = String.raw`async function privateSmoke(browser) {
     expected_auth_console_errors: [],
     expected_concealment_console_errors: [],
     paths: [],
+    hidden_operational_paths: [],
   };
   wireDiagnostics(page, result);
 
@@ -33,6 +34,7 @@ const replacement = String.raw`async function privateSmoke(browser) {
     '/%63obros',
     '/%2563obros',
     '/%252563obros',
+    '/%252525252563obros',
     '//cobros',
     '/cobros.html',
     '/nested/cobros.html',
@@ -77,6 +79,23 @@ const replacement = String.raw`async function privateSmoke(browser) {
     });
   }
 
+  const hiddenOperationalPaths = [
+    '/api/runtime/metrics',
+    '/api/defensive/status',
+    '/api/bugs',
+    '/api/findings',
+    '/api/metrics',
+  ];
+  for (const pathname of hiddenOperationalPaths) {
+    const response = await fetch(EDGE_URL + pathname, { cache: 'no-store', redirect: 'manual' });
+    const body = await response.text();
+    assert.equal(response.status, 404, pathname + ':OPERATIONAL_PATH_STATUS');
+    assert.match(response.headers.get('cache-control') || '', /no-store/, pathname + ':OPERATIONAL_CACHE_POLICY');
+    assert.deepEqual(JSON.parse(body), { error: 'not_found' }, pathname + ':OPERATIONAL_GENERIC_BODY');
+    assert(!/bug|finding|metric|defensive|runtime|asset|target|evidence/i.test(body), pathname + ':OPERATIONAL_PURPOSE_LEAK');
+    result.hidden_operational_paths.push({ pathname, status: response.status, generic_body: true });
+  }
+
   const navigation = await page.goto(EDGE_URL + '/cobros', { waitUntil: 'networkidle' });
   assert(navigation, 'PRIVATE_CONCEALMENT_NAVIGATION_MISSING');
   assert.equal(navigation.status(), 404, 'PRIVATE_CONCEALMENT_NAVIGATION_STATUS');
@@ -88,7 +107,7 @@ const replacement = String.raw`async function privateSmoke(browser) {
   await page.screenshot({ path: path.join(OUTPUT, 'private-anonymous-mobile.png'), fullPage: true });
 
   // Chromium reports an expected main-document 404 as a console error. Drain the
-  // event queue, classify only that exact concealment signal, and keep every other
+  // event queue, classify only that concealment signal, and keep every other
   // console error fatal.
   await page.waitForTimeout(150);
   const isExpectedConcealment404 = (text) =>
