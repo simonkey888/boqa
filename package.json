@@ -33,7 +33,12 @@
     "stability": "curl http://localhost:7070/api/stability",
     "alignment": "curl http://localhost:7070/api/alignment",
     "test:dashboard": "node test/test-dashboard-smoke.js",
-    "test:defensive": "node test/test-defensive-private.js && node test/test-public-private-boundary.js"
+    "test:defensive": "node test/test-defensive-private.js && node test/test-public-private-boundary.js",
+    "lab:validate-config": "node scripts/local-lab.js validate-config",
+    "lab:run-once": "node scripts/local-lab.js run-once",
+    "lab:status": "node scripts/local-lab.js status",
+    "test:lab": "node test/test-local-lab-runtime.js",
+    "test:lab:docker": "node test/test-local-lab-docker.js"
   },
   "keywords": [
     "observability",

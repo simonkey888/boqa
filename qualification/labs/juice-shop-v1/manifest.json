@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "lab_id": "juice-shop-v1",
+  "image_reference": "bkimminich/juice-shop@sha256:67b87bff95f5719f9a31ab2bcf48cacc30fcc30d4662c2047ca0c0b8b4b7ebae",
+  "image_manifest_digest": "sha256:67b87bff95f5719f9a31ab2bcf48cacc30fcc30d4662c2047ca0c0b8b4b7ebae",
+  "linux_amd64_manifest_digest": "sha256:634b5afe8732061ab640258cd921369e3ac5547369dbd90642b3504451c80ebd",
+  "image_config_digest": "sha256:7be365ac406b807479a3f0538756faff6db6e3d2b3edbaeafff3b9648203c890",
+  "upstream_version": "19.1.1",
+  "upstream_revision": "c8c407d503ce9c8e6582b39b40db84db06989744",
+  "license": "MIT",
+  "runtime_user_verification": "unverified",
+  "runtime_user_compensations": ["internal_network", "cap_drop_all", "no_new_privileges", "read_only_root", "bounded_tmpfs", "resource_limits", "zero_mounts"],
+  "clean_state_basis": "read_only_get_only_scenario_without_authentication_or_cookies",
+  "scenario_family": "INERT_REFLECTION_VALIDATION",
+  "allowed_origins": ["http://boqa-lab-juice-shop:3000", "http://boqa-lab-control:3001"],
+  "request_budget_per_scenario": 6,
+  "timeout_ms": 20000,
+  "max_redirects": 0
+}

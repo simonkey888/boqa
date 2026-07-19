@@ -1,0 +1,2 @@
+'use strict';
+const {spawnSync}=require('child_process');const probe=spawnSync('docker',['compose','version'],{encoding:'utf8'});if(probe.status!==0){console.log('Docker unavailable: NOT RUN');process.exit(2)}const check=spawnSync('docker',['compose','--profile','lab','config','--quiet'],{encoding:'utf8'});if(check.status!==0){console.error(check.stderr);process.exit(1)}console.log('local lab docker config: PASS');

@@ -16,7 +16,7 @@
     const running = state.scheduler_status === 'RUNNING';
     $('connection').textContent = 'Conectado'; $('connection-dot').className = 'online';
     $('overall').textContent = state.engine_status === 'ACTIVE' ? 'Motor operativo' : 'Motor bloqueado';
-    $('operational-copy').textContent = state.authorized_assets > 0 ? (running ? 'Validando laboratorio controlado' : 'Laboratorio controlado activo · Esperando activos externos autorizados') : 'En espera de un activo autorizado';
+    $('operational-copy').textContent = state.lab_runtime ? `${state.lab_runtime.label} · ${state.lab_runtime.vulnerable_result} · ${state.lab_runtime.control_result}` : (state.authorized_assets > 0 ? (running ? 'Validando laboratorio controlado' : 'Laboratorio controlado activo · Esperando activos externos autorizados') : 'En espera de un activo autorizado');
     $('version').textContent = `v${health.version || '—'}`; $('footer-version').textContent = `BOQA v${health.version || '—'}`;
     $('footer-sha').textContent = `SHA ${(health.release_sha || '—').slice(0, 8)}`; $('footer-backend').textContent = `Backend ${health.status || 'sin datos'}`; $('footer-scheduler').textContent = `Scheduler ${state.scheduler_status || 'sin datos'}`;
     $('k-engine').textContent = safe(state.engine_status); $('k-engine-note').textContent = state.mode || 'Sin datos';
