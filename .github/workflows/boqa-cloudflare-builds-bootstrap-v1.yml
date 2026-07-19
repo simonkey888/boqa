@@ -69,28 +69,52 @@ jobs:
           printf '%s' "$repo_connection_uuid" > /tmp/repo-connection-uuid
           jq '{success,trigger_count:((.result // [])|length),triggers:[(.result // [])[]|{trigger_uuid,trigger_name,branch_includes,branch_excludes,build_command,deploy_command,repo_name:.repo_connection.repo_name}]}' /tmp/triggers.json > output/cloudflare-builds-bootstrap-v1/triggers-before.json
 
-      - name: Create fresh dedicated build token
+      - name: Resolve current API token as build token
         run: |
           set -Eeuo pipefail
           set +x
-          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
-          token_name="BOQA Preview $(date -u +%Y%m%dT%H%M%SZ)"
-          body=$(jq -n --arg name "$token_name" '{build_token_name:$name}')
-          status=$(curl -sS -o /tmp/token-created.json -w '%{http_code}' \
-            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
-            -H 'Content-Type: application/json' \
-            -X POST --data "$body" "${base}/builds/tokens")
-          jq '{success,errors:[.errors[]?|{code,message}],result:(if .success then {build_token_name:.result.build_token_name,build_token_uuid_sha256:(.result.build_token_uuid|@base64)} else null end)}' /tmp/token-created.json > output/cloudflare-builds-bootstrap-v1/token-create-response.json
-          if [ "$status" != 200 ] && [ "$status" != 201 ]; then
-            echo 'BLOCKER=WORKERS_CI_WRITE_OR_BUILD_TOKEN_LIMIT' > output/cloudflare-builds-bootstrap-v1/blocker.txt
-            exit 78
-          fi
-          token_uuid=$(jq -r '.result.build_token_uuid' /tmp/token-created.json)
-          test -n "$token_uuid" && test "$token_uuid" != null
-          printf '%s' "$token_uuid" > /tmp/new-build-token-uuid
-          printf '%s' "$token_uuid" | sha256sum | awk '{print $1}' > output/cloudflare-builds-bootstrap-v1/build-token-uuid-sha256.txt
+          account_base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          api_base="https://api.cloudflare.com/client/v4"
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${api_base}/user/tokens/verify" > /tmp/token-verify.json
+          jq -e '.success == true and .result.status == "active"' /tmp/token-verify.json >/dev/null
+          cloudflare_token_id=$(jq -r '.result.id' /tmp/token-verify.json)
+          test -n "$cloudflare_token_id" && test "$cloudflare_token_id" != null
 
-      - name: Patch preview trigger with fresh token
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${account_base}/builds/tokens" > /tmp/build-tokens.json
+          build_token_uuid=$(jq -r --arg token_id "$cloudflare_token_id" '[.result[]? | select(.cloudflare_token_id == $token_id)][0].build_token_uuid // empty' /tmp/build-tokens.json)
+          token_source=existing_current_api_token
+
+          if [ -z "$build_token_uuid" ]; then
+            body=$(jq -n \
+              --arg name "BOQA Workers Builds Preview" \
+              --arg secret "${CLOUDFLARE_API_TOKEN}" \
+              --arg token_id "$cloudflare_token_id" \
+              '{build_token_name:$name,build_token_secret:$secret,cloudflare_token_id:$token_id}')
+            status=$(curl -sS -o /tmp/token-created.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              -X POST --data "$body" "${account_base}/builds/tokens")
+            jq '{success,errors:[.errors[]?|{code,message}],result:(if .success then {build_token_name:.result.build_token_name,owner_type:.result.owner_type} else null end)}' /tmp/token-created.json > output/cloudflare-builds-bootstrap-v1/token-create-response.json
+            if [ "$status" != 200 ] && [ "$status" != 201 ]; then
+              echo 'BLOCKER=WORKERS_CI_WRITE_OR_TOKEN_BINDING' > output/cloudflare-builds-bootstrap-v1/blocker.txt
+              exit 78
+            fi
+            build_token_uuid=$(jq -r '.result.build_token_uuid' /tmp/token-created.json)
+            token_source=registered_current_api_token
+          else
+            echo '{"success":true,"result":{"reused_current_api_token":true}}' > output/cloudflare-builds-bootstrap-v1/token-create-response.json
+          fi
+
+          test -n "$build_token_uuid" && test "$build_token_uuid" != null
+          printf '%s' "$build_token_uuid" > /tmp/new-build-token-uuid
+          jq -n \
+            --arg source "$token_source" \
+            --arg token_id_hash "$(printf '%s' "$cloudflare_token_id" | sha256sum | awk '{print $1}')" \
+            --arg build_token_hash "$(printf '%s' "$build_token_uuid" | sha256sum | awk '{print $1}')" \
+            '{source:$source,cloudflare_token_id_sha256:$token_id_hash,build_token_uuid_sha256:$build_token_hash}' > output/cloudflare-builds-bootstrap-v1/build-token-binding.json
+          rm -f /tmp/token-verify.json /tmp/build-tokens.json /tmp/token-created.json
+
+      - name: Patch preview trigger with verified token
         run: |
           set -Eeuo pipefail
           set +x
