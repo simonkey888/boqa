@@ -1,103 +1,90 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-19T14:07:30-03:00  
+LAST_VERIFIED_AT=2026-07-19T14:35:00-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
-## Fuentes de verdad
-
-1. Producción verificada.
-2. Cloudflare y backend activos.
-3. HEAD remoto de `main` y de los PR activos.
-4. GitHub Actions y artifacts.
-5. Código del repositorio.
-6. Google Doc canónico `CONTEXTO BOQA`.
-7. Memoria de chat.
-
-## Estado actual
+## Estado verificado
 
 - `REPOSITORY=simonkey888/boqa`
 - `MAIN_SHA=ede06de817d607e6717f6ea71f2e40aac68ea7a2`
-- `LAST_MERGED_PR=PR #15`
-- `PRODUCTION_URL=https://boqa.simondalmasso44.workers.dev/`
 - `PRODUCTION_SHA=INDETERMINADO`
-- `ACTIVE_WORKER_VERSION_ID=136e5689-91d3-4431-8af0-d8b3248c6e3c` — no revalidado en este delta.
-- `ACTIVE_DEPLOYMENT_ID=71016a2b-edc4-4786-8bf4-b56749507554` — no revalidado en este delta.
-- Producción no fue modificada por el hardening de esta rama.
+- Producción no fue modificada durante PR #22.
 
-## Flujos activos
-
-### Hardening público/privado
+## PR #22 — hardening del borde público
 
 - `BRANCH=fix/boqa-public-private-boundary-v2`
 - `BASE_SHA=ede06de817d607e6717f6ea71f2e40aac68ea7a2`
-- `HEAD_SHA=VERIFY_REMOTE_FROM_PR`
-- `LAST_CODE_SHA=7469e409d26381b86163d20687e7e5aa4b656d64`
-- `COMMIT_WORKER=5ae28ec99b63b5892d4e11b128268d9005a5fcc1`
-- `COMMIT_TEST=7469e409d26381b86163d20687e7e5aa4b656d64`
-- `HANDOFF_SNAPSHOT_PARENT=d5fdc54f397d9731cf523b716ce6b9e969317c4b`
-- `FILES=worker.js; test/test-public-private-boundary.js; docs/BOQA_HANDOFF.md`
-- `VALIDATION_STATUS=PENDING_CI`
-- `PRODUCTION_IMPACT=false`
+- `VALIDATED_CODE_SHA=a6cbe7fb44133a1340fc976fd257f1229c0bd699`
+- Este documento es un descendiente documental del SHA validado; verificar el HEAD remoto antes del merge.
 
-El Worker público devuelve `404` genérico con `no-store` para:
+El Worker público oculta la superficie privada antes del proxy y de los assets. Páginas, archivos y rutas privadas responden `404` genérico con política de no almacenamiento, incluso con mayúsculas, separadores alternativos y codificación múltiple.
 
-- `/cobros`
-- `/cobros.html`
-- `/cobros.js`
-- `/private.css`
-- `/api/private/billing`
-- cualquier subruta de `/api/private/billing/`
+La superficie API pública queda limitada a:
 
-La normalización cubre URL codificada, barras repetidas y diferencias de mayúsculas/minúsculas. El dashboard público no contiene enlaces, copy ni llamadas a APIs privadas de cobros. El módulo privado permanece en el backend/repositorio para una futura superficie separada y autenticada; no debe publicarse en la URL pública de BOQA.
+- `GET /api/health`
+- `GET /api/hunter/status`
 
-### Cloudflare preview
+Cualquier otra API responde `404` genérico y no llega al backend.
 
-- `PR=20`
-- `BRANCH=deploy/boqa-cloudflare-preview-v4`
-- `HEAD_SHA=6727a171d208db85a7d5511216076e3e1671dc02`
-- `WORKERS_BUILDS_RUN=29695897188` — SUCCESS
-- `CONFIG_GATE_RUN=29696143600` — SUCCESS
-- `REAL_DOCKER_RUN=29696143586` — SUCCESS
-- `BROWSER_SMOKE_RUN=29696143594` — SUCCESS
-- Workers Builds está conectado sólo para preview.
-- `PRODUCTION_TRIGGER_COUNT=0`
+## Evidencia
 
-### Backend production preflight
+- `BROWSER_RUN=29697008338` — SUCCESS
+- `BROWSER_ARTIFACT_ID=8445303463`
+- `BROWSER_DIGEST=sha256:187d4ca4724344270714cbee90d11bb15d705066a0ba100347073d3423fa8472`
+- `DOCKER_RUN=29697008393` — SUCCESS
+- `DOCKER_ARTIFACT_ID=8445311730`
+- `DOCKER_DIGEST=sha256:457d9431d93115e2bc713db4bcf2d442945b6230bc7bf80d995c567c6f394dfe`
 
-- `PR=19`
-- `BRANCH=deploy/boqa-backend-production-v1`
-- `HEAD_SHA=22313cc54c5bd60fd46248dec9841e6c8effd101`
-- `STATUS=BLOCKED`
-- `BLOCKER=MISSING_BACKEND_SSH_OR_OCI_API_ACCESS`
+Browser smoke sobre el SHA validado:
 
-## Secretos y accesos
+- desktop 1440: PASS;
+- mobile 390: PASS;
+- mobile 360: PASS;
+- estado FRESH;
+- overflow horizontal: 0;
+- errores de página: 0;
+- errores críticos de consola: 0;
+- rutas ocultas: 404 opaco;
+- deploy realizado: false.
 
-El usuario declaró existentes, tanto en GitHub Actions como en Cloudflare:
+Docker qualification sobre el mismo SHA:
 
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN`
-- `DASHBOARD_PASSWORD`
+- instalación y sintaxis: PASS;
+- suite completa: PASS;
+- integridad del diff: PASS;
+- identidad y arranque de imagen: PASS;
+- ejecución aislada final: PASS.
 
-No leer, imprimir ni documentar valores. Los nombres `BOQA_API_KEY` y `BOQA_HMAC_SECRET` fueron verificados en el handoff previo. El acceso remoto del backend sigue pendiente mediante una variante aceptada por PR #19.
+## Revisión mobile
+
+La interfaz es funcional y legible en 390 y 360 px. El pulido se hará en una rama separada para no mezclar UI con seguridad:
+
+1. traducir códigos internos a texto humano;
+2. abreviar el SHA visible conservando el valor completo de forma accesible;
+3. reducir densidad vertical sin modificar contratos.
+
+## Cloudflare y backend
+
+- La configuración actual de Workers Builds es preview-only y no posee trigger productivo.
+- PR #20 debe reconstruirse sobre el `main` final.
+- La versión exacta validada debe promoverse sin recompilar.
+- PR #19 continúa bloqueado por falta de acceso remoto al host del backend.
+- Cloudflare no sustituye el runtime que ejecuta Node, Playwright y Docker.
 
 ## Reglas permanentes
 
-- No validar terceros.
-- No imprimir secretos.
+- No validar infraestructura de terceros.
 - No trabajar directamente sobre `main`.
-- `BOQA_RELEASE_SHA` debe coincidir con el SHA realmente desplegado.
-- La URL pública no debe revelar Centro de Pagos, rutas privadas, datos financieros ni metadatos sensibles.
-- Las rutas privadas deben responder `404` en el Worker público.
-- No promover el `main` actual hasta integrar y validar este hardening.
-- No declarar producción desplegada sin versión, deployment, tráfico, health, browser smoke y rollback state.
-- Actualizar este archivo y el Google Doc canónico ante cada cambio material, deploy, rollback o incidente.
+- No exponer información privada u operativa innecesaria en la URL pública.
+- No confundir CI, preview, versión subida, deployment y producción activa.
+- No declarar producción actualizada sin versión, deployment, tráfico, health, browser smoke y rollback verificados.
+- Mantener sincronizados este archivo y el documento canónico de Drive.
 
-## Next exact action
+## Siguiente acción exacta
 
-1. Verificar el HEAD remoto de `fix/boqa-public-private-boundary-v2` y crear un Draft PR hacia `main` anclado a ese SHA.
-2. Exigir tests, Docker qualification, browser smoke y preview exacta.
-3. Verificar que rutas y assets privados respondan `404` sin revelar su propósito.
-4. Integrar primero este hardening si CI queda verde.
-5. Rebasar o reconstruir PR #20 sobre el nuevo `main`, manteniendo cero trigger productivo.
-6. Resolver el acceso remoto de PR #19 y completar el preflight del backend.
-7. Promover únicamente una versión que incluya el hardening y completar validación productiva más rollback state.
+1. Exigir los dos gates verdes sobre este commit documental.
+2. Verificar HEAD y mergeabilidad de PR #22.
+3. Integrar PR #22 sólo con SHA esperado.
+4. Ejecutar el pulido mobile en una rama separada y validarlo.
+5. Reconstruir preview y preflight sobre el `main` final.
+6. Promover sólo la versión exacta validada y verificar producción más rollback.
