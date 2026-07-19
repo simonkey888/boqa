@@ -8,6 +8,7 @@ const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'dashboard', 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'dashboard', 'app.js'), 'utf8');
 const state = fs.readFileSync(path.join(root, 'dashboard', 'dashboard-state.js'), 'utf8');
+const css = fs.readFileSync(path.join(root, 'dashboard', 'style.css'), 'utf8');
 const worker = fs.readFileSync(path.join(root, 'worker.js'), 'utf8');
 
 assert.match(html, /<script\s+src=["']\/dashboard-state\.js["']\s+defer><\/script>/, 'dashboard must load the state contract');
@@ -20,6 +21,13 @@ assert.match(app, /\/api\/hunter\/status/, 'dashboard must consume the public hu
 assert.match(app, /\/api\/health/, 'dashboard must consume health');
 assert.doesNotMatch(app, /defensive\/status|\/api\/bugs|\/api\/findings/, 'dashboard must not consume legacy synthetic sources');
 assert.match(app, /document\.hidden/, 'polling must pause while hidden');
+assert.match(html, /id=["']hunt-live["']/, 'dashboard must expose the lightweight live hunter trace');
+assert.match(app, /function cycleIsRunning\(payload\)/, 'live trace must use an explicit real-cycle predicate');
+assert.match(app, /payload\.state !== 'STARTING'/, 'live movement must require the runtime STARTING state');
+assert.match(app, /startedAt > completedAt/, 'live movement must require an unfinished real cycle');
+assert.match(css, /@keyframes hunt-sweep/, 'live trace must include the lightweight sweep animation');
+assert.match(css, /prefers-reduced-motion:reduce/, 'live trace must respect reduced-motion preferences');
+assert.doesNotMatch(css, /@import|https?:\/\//i, 'dashboard CSS must not load remote fonts or visual dependencies');
 assert.match(state, /LOADING/);
 assert.match(state, /FRESH/);
 assert.match(state, /STALE/);
