@@ -41,7 +41,12 @@ jobs:
         run: |
           set -Eeuo pipefail
           node --check scripts/browser-smoke-v1.js
-          node scripts/browser-smoke-v1.js
+          if [ -f scripts/browser-smoke-public-edge-v2.js ]; then
+            node --check scripts/browser-smoke-public-edge-v2.js
+            node scripts/browser-smoke-public-edge-v2.js
+          else
+            node scripts/browser-smoke-v1.js
+          fi
       - name: Verify evidence checksums
         run: |
           set -Eeuo pipefail
