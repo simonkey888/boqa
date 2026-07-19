@@ -47,7 +47,7 @@ jobs:
       - name: Initialize evidence
         run: |
           mkdir -p output/cloudflare-preview-v3
-          printf '{"source_sha":"%s","production_traffic_changed":false,"production_deployment_performed":false}\n' "${SOURCE_SHA}" > output/cloudflare-preview-v3/manifest.json
+          printf '{"source_sha":"%s","preview_contract":"worker_before_backend","production_traffic_changed":false,"production_deployment_performed":false}\n' "${SOURCE_SHA}" > output/cloudflare-preview-v3/manifest.json
 
       - name: Verify Cloudflare access and configuration
         run: |
@@ -121,6 +121,11 @@ jobs:
           const base = process.env.PREVIEW_URL;
           const out = 'output/cloudflare-preview-v3';
           const sizes = [[1440,900,'desktop-1440'],[390,844,'mobile-390'],[360,800,'mobile-360']];
+
+          function pathname(value) {
+            try { return new URL(value).pathname; } catch (_) { return value; }
+          }
+
           (async () => {
             const browser = await chromium.launch({ headless: true });
             const results = [];
@@ -130,8 +135,17 @@ jobs:
                 const page = await browser.newPage({ viewport: { width, height } });
                 const pageErrors = [];
                 const consoleErrors = [];
+                const failedResponses = [];
                 page.on('pageerror', (error) => pageErrors.push(String(error)));
-                page.on('console', (message) => { if (message.type() === 'error') consoleErrors.push(message.text()); });
+                page.on('console', (message) => {
+                  if (message.type() === 'error') consoleErrors.push(message.text());
+                });
+                page.on('response', (response) => {
+                  if (response.status() >= 400) {
+                    failedResponses.push({ path: pathname(response.url()), status: response.status() });
+                  }
+                });
+
                 const response = await page.goto(`${base}/`, { waitUntil: 'networkidle', timeout: 30000 });
                 await page.waitForFunction(() => document.querySelector('#overall-state')?.textContent !== 'LOADING', null, { timeout: 20000 });
                 const state = await page.evaluate(() => {
@@ -146,15 +160,42 @@ jobs:
                     overflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
                   };
                 });
+
                 await page.screenshot({ path: `${out}/${name}-initial.png`, fullPage: true });
                 await page.keyboard.press('Tab');
                 const skipFocusable = await page.evaluate(() => document.activeElement?.classList.contains('skip-link') === true);
-                const result = { name, width, height, http: response?.status() || null, ...state, skipFocusable, pageErrors, consoleErrors };
+
+                const legacyHunter404 = failedResponses.some((item) => item.path === '/api/hunter/status' && item.status === 404);
+                const unexpectedFailedResponses = failedResponses.filter((item) => !(item.path === '/api/hunter/status' && item.status === 404));
+                const unexpectedConsoleErrors = consoleErrors.filter((message) => {
+                  return !(legacyHunter404 && message.includes('Failed to load resource'));
+                });
+                const compatibleRuntime = state.overall === 'FRESH' && state.hunter === 'ACTIVE' && state.health === 'ok';
+                const legacyRuntime = state.overall === 'DEGRADED' && state.hunter === 'N/D' && state.health === 'ok' && legacyHunter404;
+                const runtimeMode = compatibleRuntime ? 'compatible_backend' : (legacyRuntime ? 'legacy_backend_expected' : 'invalid');
+
+                const result = {
+                  name,
+                  width,
+                  height,
+                  http: response?.status() || null,
+                  ...state,
+                  skipFocusable,
+                  runtimeMode,
+                  pageErrors,
+                  consoleErrors,
+                  failedResponses,
+                  unexpectedConsoleErrors,
+                  unexpectedFailedResponses,
+                };
                 results.push(result);
-                if (result.http !== 200 || result.overall !== 'FRESH' || result.hunter !== 'ACTIVE' || result.health !== 'ok') failures.push(`${name}:runtime_state`);
+
+                if (result.http !== 200 || runtimeMode === 'invalid') failures.push(`${name}:runtime_state`);
                 if (!result.huntVisible || result.containerType !== 'inline-size') failures.push(`${name}:hunt_trace`);
                 if (result.initialFocus.includes('skip-link') || !result.skipFocusable) failures.push(`${name}:focus`);
-                if (result.overflow || pageErrors.length || consoleErrors.length) failures.push(`${name}:browser`);
+                if (result.overflow || pageErrors.length || unexpectedConsoleErrors.length || unexpectedFailedResponses.length) {
+                  failures.push(`${name}:browser`);
+                }
                 await page.close();
               }
             } finally {
@@ -171,16 +212,26 @@ jobs:
           node <<'NODE'
           const fs = require('fs');
           const base = process.env.PREVIEW_URL;
-          const expected = [['/',200],['/health',200],['/api/health',200],['/api/hunter/status',200],['/api/defensive/status',200]];
+          const required = [['/',[200]],['/health',[200]],['/api/health',[200]],['/api/defensive/status',[200]],['/api/hunter/status',[200,404]]];
           (async () => {
             const rows = [];
             const failures = [];
-            for (const [route,status] of expected) {
+            for (const [route,allowed] of required) {
               const response = await fetch(base + route, { cache: 'no-store' });
-              rows.push({ route, status: response.status, expected: status, cache_control: response.headers.get('cache-control') });
-              if (response.status !== status) failures.push(`${route}:${response.status}`);
+              rows.push({
+                route,
+                status: response.status,
+                allowed,
+                cache_control: response.headers.get('cache-control'),
+                contract_mode: route === '/api/hunter/status' && response.status === 404 ? 'legacy_backend_expected' : 'compatible',
+              });
+              if (!allowed.includes(response.status)) failures.push(`${route}:${response.status}`);
             }
-            fs.writeFileSync('output/cloudflare-preview-v3/http-contracts.json', JSON.stringify(rows, null, 2));
+            const hunter = rows.find((row) => row.route === '/api/hunter/status');
+            fs.writeFileSync('output/cloudflare-preview-v3/http-contracts.json', JSON.stringify({
+              rows,
+              backend_contract: hunter.status === 200 ? 'compatible' : 'legacy_pending_backend_deploy',
+            }, null, 2));
             if (failures.length) throw new Error(failures.join(','));
           })().catch((error) => { console.error(error); process.exit(1); });
           NODE
