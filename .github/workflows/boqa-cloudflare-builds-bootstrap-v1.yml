@@ -1,0 +1,242 @@
+name: BOQA Cloudflare Workers Builds Bootstrap V1
+
+on:
+  push:
+    branches:
+      - deploy/boqa-cloudflare-preview-v4
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-cloudflare-builds-bootstrap-v1
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SOURCE_MAIN_SHA: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+      WORKER_NAME: boqa
+      GITHUB_PROVIDER_ACCOUNT_ID: '268390381'
+      GITHUB_PROVIDER_ACCOUNT_NAME: simonkey888
+      GITHUB_REPOSITORY_ID: '1295919243'
+      GITHUB_REPOSITORY_NAME: boqa
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout bootstrap branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+
+      - name: Verify inputs and initialize evidence
+        run: |
+          set -Eeuo pipefail
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          mkdir -p output/cloudflare-builds-bootstrap-v1
+          printf '{"main_source_sha":"%s","bootstrap_sha":"%s","preview_only":true,"production_trigger_created":false,"production_changed":false,"deploy_performed":false}\n' \
+            "${SOURCE_MAIN_SHA}" "${GITHUB_SHA}" > output/cloudflare-builds-bootstrap-v1/manifest.json
+
+      - name: Record production rollback point
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.112.0 deployments list --name "${WORKER_NAME}" --json > output/cloudflare-builds-bootstrap-v1/deployments-before.json
+          npx --yes wrangler@4.112.0 versions list --name "${WORKER_NAME}" --json > output/cloudflare-builds-bootstrap-v1/versions-before.json
+
+      - name: Resolve Worker and existing Builds configuration
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          auth=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
+
+          curl -fsS "${auth[@]}" "${base}/workers/scripts" > /tmp/workers.json
+          worker_tag=$(jq -r --arg name "${WORKER_NAME}" '.result[] | select(.id == $name) | .tag' /tmp/workers.json)
+          test -n "$worker_tag" && test "$worker_tag" != null
+          printf '%s' "$worker_tag" > /tmp/worker-tag
+          jq -n --arg worker_name "${WORKER_NAME}" --arg worker_tag "$worker_tag" '{worker_name:$worker_name,worker_tag:$worker_tag}' > output/cloudflare-builds-bootstrap-v1/worker.json
+
+          curl -fsS "${auth[@]}" "${base}/builds/workers/${worker_tag}/triggers" > /tmp/triggers-before.json
+          jq '{success, trigger_count:((.result // [])|length), triggers:[(.result // [])[]|{trigger_uuid,trigger_name,branch_includes,branch_excludes,build_command,deploy_command,root_directory,repo_name:.repo_connection.repo_name,provider_type:.repo_connection.provider_type}]}' \
+            /tmp/triggers-before.json > output/cloudflare-builds-bootstrap-v1/triggers-before.json
+
+          production_count=$(jq '[.result[]? | select((.branch_includes // []) | index("main"))] | length' /tmp/triggers-before.json)
+          if [ "$production_count" -ne 0 ]; then
+            echo 'BLOCKER=EXISTING_PRODUCTION_TRIGGER_REQUIRES_MANUAL_AUDIT' > output/cloudflare-builds-bootstrap-v1/blocker.txt
+            exit 78
+          fi
+
+      - name: Upsert GitHub repository connection
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          body=$(jq -n \
+            --arg provider_account_id "${GITHUB_PROVIDER_ACCOUNT_ID}" \
+            --arg provider_account_name "${GITHUB_PROVIDER_ACCOUNT_NAME}" \
+            --arg repo_id "${GITHUB_REPOSITORY_ID}" \
+            --arg repo_name "${GITHUB_REPOSITORY_NAME}" \
+            '{provider_type:"github",provider_account_id:$provider_account_id,provider_account_name:$provider_account_name,repo_id:$repo_id,repo_name:$repo_name}')
+          status=$(curl -sS -o /tmp/repo-connection.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -X PUT \
+            --data "$body" \
+            "${base}/builds/repos/connections")
+          jq '{success, errors:[.errors[]?|{code,message}], result:(if .success then {repo_connection_uuid:.result.repo_connection_uuid,provider_type:.result.provider_type,provider_account_name:.result.provider_account_name,repo_name:.result.repo_name} else null end)}' \
+            /tmp/repo-connection.json > output/cloudflare-builds-bootstrap-v1/repo-connection.json
+          if [ "$status" != 200 ] || ! jq -e '.success == true' /tmp/repo-connection.json >/dev/null; then
+            echo 'BLOCKER=GITHUB_APP_AUTHORIZATION_OR_WORKERS_CI_WRITE_PERMISSION' > output/cloudflare-builds-bootstrap-v1/blocker.txt
+            exit 78
+          fi
+          jq -r '.result.repo_connection_uuid' /tmp/repo-connection.json > /tmp/repo-connection-uuid
+
+      - name: Resolve dedicated build token
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/builds/tokens" > /tmp/build-tokens.json
+          token_uuid=$(jq -r '[.result[]? | select((.build_token_name // "") | test("boqa";"i"))][0].build_token_uuid // empty' /tmp/build-tokens.json)
+          token_source=existing_boqa_named
+          if [ -z "$token_uuid" ]; then
+            token_uuid=$(jq -r '.result[0].build_token_uuid // empty' /tmp/build-tokens.json)
+            token_source=existing_account_token
+          fi
+          if [ -z "$token_uuid" ]; then
+            status=$(curl -sS -o /tmp/build-token-created.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              -X POST \
+              --data '{"build_token_name":"BOQA Workers Builds Preview"}' \
+              "${base}/builds/tokens")
+            if [ "$status" != 200 ] && [ "$status" != 201 ]; then
+              jq '{success,errors:[.errors[]?|{code,message}]}' /tmp/build-token-created.json > output/cloudflare-builds-bootstrap-v1/build-token-error.json
+              echo 'BLOCKER=WORKERS_CI_WRITE_BUILD_TOKEN' > output/cloudflare-builds-bootstrap-v1/blocker.txt
+              exit 78
+            fi
+            token_uuid=$(jq -r '.result.build_token_uuid' /tmp/build-token-created.json)
+            token_source=created_dedicated
+          fi
+          test -n "$token_uuid" && test "$token_uuid" != null
+          printf '%s' "$token_uuid" > /tmp/build-token-uuid
+          jq -n --arg source "$token_source" --arg hash "$(printf '%s' "$token_uuid" | sha256sum | awk '{print $1}')" '{source:$source,build_token_uuid_sha256:$hash}' > output/cloudflare-builds-bootstrap-v1/build-token.json
+
+      - name: Create or reuse preview-only trigger
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          worker_tag=$(cat /tmp/worker-tag)
+          repo_connection_uuid=$(cat /tmp/repo-connection-uuid)
+          build_token_uuid=$(cat /tmp/build-token-uuid)
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/builds/workers/${worker_tag}/triggers" > /tmp/triggers-current.json
+          preview_uuid=$(jq -r '[.result[]? | select(((.branch_includes // []) | index("*")) and (((.branch_excludes // []) | index("main"))))][0].trigger_uuid // empty' /tmp/triggers-current.json)
+          if [ -z "$preview_uuid" ]; then
+            body=$(jq -n \
+              --arg worker_tag "$worker_tag" \
+              --arg repo_connection_uuid "$repo_connection_uuid" \
+              --arg build_token_uuid "$build_token_uuid" \
+              '{external_script_id:$worker_tag,repo_connection_uuid:$repo_connection_uuid,build_token_uuid:$build_token_uuid,trigger_name:"BOQA Preview Branches",build_command:"npm ci && npm test",deploy_command:"npx wrangler@4.112.0 versions upload --keep-vars",root_directory:"/",branch_includes:["*"],branch_excludes:["main"],path_includes:["*"],path_excludes:["docs/**",".github/**"],build_caching_enabled:true}')
+            status=$(curl -sS -o /tmp/trigger-created.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+              -H 'Content-Type: application/json' \
+              -X POST \
+              --data "$body" \
+              "${base}/builds/triggers")
+            jq '{success,errors:[.errors[]?|{code,message}],result:(if .success then {trigger_uuid:.result.trigger_uuid,trigger_name:.result.trigger_name,branch_includes:.result.branch_includes,branch_excludes:.result.branch_excludes,build_command:.result.build_command,deploy_command:.result.deploy_command,repo_name:.result.repo_connection.repo_name} else null end)}' \
+              /tmp/trigger-created.json > output/cloudflare-builds-bootstrap-v1/trigger-create.json
+            if [ "$status" != 200 ] && [ "$status" != 201 ]; then
+              echo 'BLOCKER=WORKERS_CI_WRITE_TRIGGER_CREATE' > output/cloudflare-builds-bootstrap-v1/blocker.txt
+              exit 78
+            fi
+            preview_uuid=$(jq -r '.result.trigger_uuid' /tmp/trigger-created.json)
+          else
+            jq -n --arg trigger_uuid "$preview_uuid" '{reused_existing_preview_trigger:true,trigger_uuid:$trigger_uuid}' > output/cloudflare-builds-bootstrap-v1/trigger-create.json
+          fi
+          printf '%s' "$preview_uuid" > /tmp/preview-trigger-uuid
+
+      - name: Enforce preview-only configuration
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          worker_tag=$(cat /tmp/worker-tag)
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/builds/workers/${worker_tag}/triggers" > /tmp/triggers-after.json
+          jq '{success,trigger_count:((.result // [])|length),triggers:[(.result // [])[]|{trigger_uuid,trigger_name,branch_includes,branch_excludes,build_command,deploy_command,root_directory,repo_name:.repo_connection.repo_name,provider_type:.repo_connection.provider_type}]}' \
+            /tmp/triggers-after.json > output/cloudflare-builds-bootstrap-v1/triggers-after.json
+          production_count=$(jq '[.result[]? | select((.branch_includes // []) | index("main"))] | length' /tmp/triggers-after.json)
+          preview_count=$(jq '[.result[]? | select(((.branch_includes // []) | index("*")) and (((.branch_excludes // []) | index("main"))))] | length' /tmp/triggers-after.json)
+          test "$production_count" -eq 0
+          test "$preview_count" -eq 1
+          jq -e '.result[] | select(((.branch_includes // []) | index("*")) and (((.branch_excludes // []) | index("main")))) | .deploy_command | contains("versions upload")' /tmp/triggers-after.json >/dev/null
+          echo 'WORKERS_BUILDS_PREVIEW_ONLY=PASS' > output/cloudflare-builds-bootstrap-v1/result.txt
+
+      - name: Trigger exact preview build
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          preview_uuid=$(cat /tmp/preview-trigger-uuid)
+          body=$(jq -n --arg branch "${GITHUB_REF_NAME}" --arg commit_hash "${GITHUB_SHA}" '{branch:$branch,commit_hash:$commit_hash}')
+          status=$(curl -sS -o /tmp/build-created.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            -H 'Content-Type: application/json' \
+            -X POST \
+            --data "$body" \
+            "${base}/builds/triggers/${preview_uuid}/builds")
+          jq '{success,errors:[.errors[]?|{code,message}],result:.result}' /tmp/build-created.json > output/cloudflare-builds-bootstrap-v1/build-created.json
+          if [ "$status" != 200 ] && [ "$status" != 201 ]; then
+            echo 'BLOCKER=WORKERS_CI_WRITE_MANUAL_BUILD' > output/cloudflare-builds-bootstrap-v1/blocker.txt
+            exit 78
+          fi
+          jq -r '.result.build_uuid' /tmp/build-created.json > /tmp/build-uuid
+
+      - name: Follow Workers Build to completion
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          build_uuid=$(cat /tmp/build-uuid)
+          for attempt in $(seq 1 120); do
+            curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/builds/builds/${build_uuid}" > /tmp/build.json
+            status=$(jq -r '.result.status // empty' /tmp/build.json)
+            outcome=$(jq -r '.result.build_outcome // empty' /tmp/build.json)
+            if [ "$status" = stopped ]; then
+              break
+            fi
+            sleep 5
+          done
+          jq '{success,result:{build_uuid:.result.build_uuid,status:.result.status,build_outcome:.result.build_outcome,created_on:.result.created_on,stopped_on:.result.stopped_on,branch:.result.build_trigger_metadata.branch,commit_hash:.result.build_trigger_metadata.commit_hash,build_trigger_source:.result.build_trigger_metadata.build_trigger_source,build_command:.result.build_trigger_metadata.build_command,deploy_command:.result.build_trigger_metadata.deploy_command}}' \
+            /tmp/build.json > output/cloudflare-builds-bootstrap-v1/build-final.json
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/builds/builds/${build_uuid}/logs" > output/cloudflare-builds-bootstrap-v1/build-logs.json
+          test "$(jq -r '.result.status' /tmp/build.json)" = stopped
+          test "$(jq -r '.result.build_outcome' /tmp/build.json)" = success
+
+      - name: Prove production unchanged
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.112.0 deployments list --name "${WORKER_NAME}" --json > output/cloudflare-builds-bootstrap-v1/deployments-after.json
+          npx --yes wrangler@4.112.0 versions list --name "${WORKER_NAME}" --json > output/cloudflare-builds-bootstrap-v1/versions-after.json
+          cmp output/cloudflare-builds-bootstrap-v1/deployments-before.json output/cloudflare-builds-bootstrap-v1/deployments-after.json
+          echo '{"production_deployments_unchanged":true,"production_traffic_changed":false}' > output/cloudflare-builds-bootstrap-v1/traffic-proof.json
+
+      - name: Verify evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/cloudflare-builds-bootstrap-v1
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload bootstrap evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-builds-bootstrap-v1-${{ env.SOURCE_MAIN_SHA }}
+          path: output/cloudflare-builds-bootstrap-v1/
+          if-no-files-found: error
+          retention-days: 14
