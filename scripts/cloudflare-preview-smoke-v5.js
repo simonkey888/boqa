@@ -16,6 +16,38 @@ if (!/^https:\/\/[a-z0-9-]+\.workers\.dev$/i.test(PREVIEW_URL)) {
 
 fs.mkdirSync(OUTPUT, { recursive: true });
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForPreview(evidence, timeoutMs = 180_000) {
+  const deadline = Date.now() + timeoutMs;
+  const attempts = [];
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${PREVIEW_URL}/health`, {
+        cache: 'no-store',
+        redirect: 'manual',
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+      const body = await response.text();
+      let json = null;
+      try { json = JSON.parse(body); } catch (_) {}
+      attempts.push({ status: response.status, error: null });
+      if (response.status === 200 && json?.status === 'ok' && json?.worker === 'boqa') {
+        evidence.preview_readiness = { ready: true, attempt_count: attempts.length, last_status: response.status };
+        return;
+      }
+    } catch (error) {
+      attempts.push({ status: null, error: error.cause?.code || error.code || error.message || 'fetch_failed' });
+    }
+    await sleep(3_000);
+  }
+  const last = attempts.at(-1) || { status: null, error: 'no_attempt' };
+  evidence.preview_readiness = { ready: false, attempt_count: attempts.length, last_status: last.status, last_error: last.error };
+  throw new Error(`PREVIEW_NOT_READY:${JSON.stringify(evidence.preview_readiness)}`);
+}
+
 async function fetchJson(pathname, expectedStatus = 200) {
   const response = await fetch(`${PREVIEW_URL}${pathname}`, {
     cache: 'no-store',
@@ -153,16 +185,22 @@ async function main() {
     started_at: new Date().toISOString(),
   };
 
-  await verifyEdgeContracts(evidence);
-  const browser = await chromium.launch({ headless: true });
+  let browser = null;
   try {
+    await waitForPreview(evidence);
+    await verifyEdgeContracts(evidence);
+    browser = await chromium.launch({ headless: true });
     evidence.viewports = [];
     evidence.viewports.push(await smokeViewport(browser, { width: 1440, height: 900 }, 'desktop-1440'));
     evidence.viewports.push(await smokeViewport(browser, { width: 390, height: 844 }, 'mobile-390'));
     evidence.viewports.push(await smokeViewport(browser, { width: 360, height: 800 }, 'mobile-360'));
     evidence.status = 'PASS';
+  } catch (error) {
+    evidence.status = 'FAIL';
+    evidence.error = error.message || String(error);
+    throw error;
   } finally {
-    await browser.close();
+    if (browser) await browser.close().catch(() => {});
     evidence.completed_at = new Date().toISOString();
     fs.writeFileSync(path.join(OUTPUT, 'preview-smoke-evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
   }
