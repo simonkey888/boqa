@@ -1,0 +1,87 @@
+name: BOQA Cloudflare Workers Builds Configuration Gate V1
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-cloudflare-builds-configuration-v1
+  cancel-in-progress: true
+
+jobs:
+  configuration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WORKER_NAME: boqa
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify identity and initialize evidence
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          test -z "$(git status --porcelain)"
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          mkdir -p output/cloudflare-builds-configuration-v1
+          printf '{"head_sha":"%s","read_only":true,"production_changed":false,"deploy_performed":false}\n' \
+            "${{ github.event.pull_request.head.sha }}" > output/cloudflare-builds-configuration-v1/manifest.json
+
+      - name: Audit Workers Builds configuration
+        run: |
+          set -Eeuo pipefail
+          set +x
+          base="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}"
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/workers/scripts" > /tmp/workers.json
+          worker_tag=$(jq -r --arg name "${WORKER_NAME}" '.result[] | select(.id == $name) | .tag' /tmp/workers.json)
+          test -n "$worker_tag" && test "$worker_tag" != null
+
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/builds/workers/${worker_tag}/triggers" > /tmp/triggers.json
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/builds/workers/${worker_tag}/builds?page=1&per_page=10" > /tmp/builds.json
+          curl -fsS -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" "${base}/builds/account/limits" > /tmp/limits.json
+
+          jq '{success,trigger_count:((.result // [])|length),triggers:[(.result // [])[]|{trigger_uuid,trigger_name,branch_includes,branch_excludes,build_command,deploy_command,root_directory,repo_name:.repo_connection.repo_name,provider_type:.repo_connection.provider_type}]}' \
+            /tmp/triggers.json > output/cloudflare-builds-configuration-v1/triggers.json
+          jq '{success,build_count:((.result // [])|length),latest_builds:[(.result // [])[0:10][]?|{build_uuid,status,build_outcome,created_on,stopped_on,branch:.build_trigger_metadata.branch,commit_hash:.build_trigger_metadata.commit_hash,source:.build_trigger_metadata.build_trigger_source}]}' \
+            /tmp/builds.json > output/cloudflare-builds-configuration-v1/builds.json
+          jq '{success,result:{has_reached_build_minutes_limit:.result.has_reached_build_minutes_limit,build_minutes_refresh_on:.result.build_minutes_refresh_on}}' \
+            /tmp/limits.json > output/cloudflare-builds-configuration-v1/limits.json
+
+          production_count=$(jq '[.result[]? | select((.branch_includes // []) | index("main"))] | length' /tmp/triggers.json)
+          preview_count=$(jq '[.result[]? | select(((.branch_includes // []) | index("*")) and (((.branch_excludes // []) | index("main"))))] | length' /tmp/triggers.json)
+          successful_builds=$(jq '[.result[]? | select(.build_outcome == "success")] | length' /tmp/builds.json)
+
+          test "$production_count" -eq 0
+          test "$preview_count" -eq 1
+          test "$successful_builds" -ge 1
+          jq -e '.result[] | select(((.branch_includes // []) | index("*")) and (((.branch_excludes // []) | index("main")))) | (.repo_connection.provider_type == "github" and .repo_connection.repo_name == "boqa" and (.deploy_command | contains("versions upload")))' /tmp/triggers.json >/dev/null
+          jq -e '.result.has_reached_build_minutes_limit == false' /tmp/limits.json >/dev/null
+          echo 'WORKERS_BUILDS_CONFIGURATION=PASS' > output/cloudflare-builds-configuration-v1/result.txt
+
+      - name: Verify evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/cloudflare-builds-configuration-v1
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload configuration evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-builds-configuration-v1-${{ github.event.pull_request.head.sha }}
+          path: output/cloudflare-builds-configuration-v1/
+          if-no-files-found: error
+          retention-days: 14
