@@ -1,0 +1,63 @@
+name: BOQA Cloudflare Access Diagnostic V2
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'deploy/boqa-cloudflare-preview-v2'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Diagnose access without exposing credentials
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/cloudflare-access-diagnostic-v2
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo 'MISSING_ACCESS=CLOUDFLARE_API_TOKEN' > output/cloudflare-access-diagnostic-v2/result.txt
+            exit 78
+          fi
+          set +e
+          npx --yes wrangler@4.112.0 whoami > output/cloudflare-access-diagnostic-v2/whoami.txt 2> output/cloudflare-access-diagnostic-v2/error.txt
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            sed -E 's/(Bearer|token|Token|TOKEN)[=: ]+[^ ]+/\1=[REDACTED]/g' output/cloudflare-access-diagnostic-v2/error.txt > output/cloudflare-access-diagnostic-v2/error-redacted.txt
+            rm -f output/cloudflare-access-diagnostic-v2/error.txt
+            if grep -Eqi 'account.?id|CLOUDFLARE_ACCOUNT_ID|multiple accounts|non-interactive.*account' output/cloudflare-access-diagnostic-v2/error-redacted.txt; then
+              echo 'MISSING_ACCESS=CLOUDFLARE_ACCOUNT_ID' > output/cloudflare-access-diagnostic-v2/result.txt
+            elif grep -Eqi 'authentication|authenticate|invalid.*token|unauthorized|forbidden|permission|code.?10000|code.?9109' output/cloudflare-access-diagnostic-v2/error-redacted.txt; then
+              echo 'MISSING_ACCESS=CLOUDFLARE_API_TOKEN_WITH_WORKERS_PERMISSIONS' > output/cloudflare-access-diagnostic-v2/result.txt
+            else
+              echo 'MISSING_ACCESS=CLOUDFLARE_API_ACCESS' > output/cloudflare-access-diagnostic-v2/result.txt
+            fi
+            cat output/cloudflare-access-diagnostic-v2/result.txt
+            cat output/cloudflare-access-diagnostic-v2/error-redacted.txt
+            exit 78
+          fi
+          echo 'CLOUDFLARE_ACCESS=PASS' > output/cloudflare-access-diagnostic-v2/result.txt
+
+      - name: Generate checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/cloudflare-access-diagnostic-v2
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-cloudflare-access-diagnostic-v2
+          path: output/cloudflare-access-diagnostic-v2/
+          if-no-files-found: error
+          retention-days: 7
