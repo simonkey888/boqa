@@ -33,12 +33,16 @@ async function run() {
   assert(!worker.includes('isPrivateBilling'));
   assert(worker.indexOf('if (isPrivateSurface(url.pathname))') < worker.indexOf('if (env && env.ASSETS)'));
 
-  // The public edge exposes only the two contracts consumed by the public UI.
-  assert(worker.includes("'/api/health'"));
-  assert(worker.includes("'/api/hunter/status'"));
-  assert(!worker.includes("'/api/runtime/metrics'"));
-  assert(!worker.includes("'/api/defensive/status'"));
-  assert(!worker.includes("'/api/bugs'"));
+  const allowlistMatch = worker.match(/const publicReadPaths = new Set\(\[([\s\S]*?)\]\);/);
+  assert(allowlistMatch, 'public API allowlist must remain explicit');
+  const allowlistBody = allowlistMatch[1];
+  assert(allowlistBody.includes("'/api/health'"));
+  assert(allowlistBody.includes("'/api/hunter/status'"));
+  assert(!allowlistBody.includes("'/api/runtime/metrics'"));
+  assert(!allowlistBody.includes("'/api/defensive/status'"));
+  assert(!allowlistBody.includes("'/api/bugs'"));
+  assert(worker.includes("backendPath: '/api/defensive/status'"), 'legacy route may be used only as an internal compatibility source');
+  assert(worker.includes('normalizeLegacyHunterPayload'));
 
   const moduleUrl = `data:text/javascript;base64,${Buffer.from(worker, 'utf8').toString('base64')}`;
   const workerModule = await import(moduleUrl);
@@ -46,26 +50,11 @@ async function run() {
   assert(publicWorker && typeof publicWorker.fetch === 'function');
 
   const privatePaths = [
-    '/cobros',
-    '/cobros/',
-    '/COBROS',
-    '/%63obros',
-    '/%2563obros',
-    '/%252563obros',
-    '/%252525252563obros',
-    '//cobros',
-    '/cobros.html',
-    '/nested/cobros.html',
-    '/%2563obros.html',
-    '/cobros.js',
-    '/private.css',
-    '/api/private/billing',
-    '/api/private/billing/',
-    '/api/private/billing/data',
-    '/API/PRIVATE/BILLING/DATA',
-    '/%61pi/private/billing/data',
-    '/%2561pi%252fprivate%252fbilling%252fdata',
-    '/api//private//billing//data',
+    '/cobros', '/cobros/', '/COBROS', '/%63obros', '/%2563obros', '/%252563obros',
+    '/%252525252563obros', '//cobros', '/cobros.html', '/nested/cobros.html', '/%2563obros.html',
+    '/cobros.js', '/private.css', '/api/private/billing', '/api/private/billing/',
+    '/api/private/billing/data', '/API/PRIVATE/BILLING/DATA', '/%61pi/private/billing/data',
+    '/%2561pi%252fprivate%252fbilling%252fdata', '/api//private//billing//data',
     '/api/%255cprivate%255cbilling%255cdata',
   ];
 
@@ -73,12 +62,7 @@ async function run() {
     let assetsTouched = false;
     const env = {
       BOQA_BACKEND_URL: 'https://backend.invalid',
-      ASSETS: {
-        async fetch() {
-          assetsTouched = true;
-          throw new Error('private path reached public assets binding');
-        },
-      },
+      ASSETS: { async fetch() { assetsTouched = true; throw new Error('private path reached public assets binding'); } },
     };
     const response = await publicWorker.fetch(new Request(`https://public.invalid${pathname}`), env);
     assert.equal(response.status, 404, `${pathname} must be concealed with 404`);
@@ -89,24 +73,13 @@ async function run() {
     const body = await response.text();
     assert(!/cobros|billing|payment|pago|finanz/i.test(body), `${pathname} response reveals private purpose`);
     const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      assert.deepEqual(JSON.parse(body), { error: 'not_found' });
-    } else {
-      assert.equal(body, 'Not Found');
-    }
+    if (contentType.includes('application/json')) assert.deepEqual(JSON.parse(body), { error: 'not_found' });
+    else assert.equal(body, 'Not Found');
   }
 
-  const hiddenOperationalPaths = [
-    '/api/runtime/metrics',
-    '/api/defensive/status',
-    '/api/bugs',
-    '/api/findings',
-    '/api/metrics',
-  ];
+  const hiddenOperationalPaths = ['/api/runtime/metrics', '/api/defensive/status', '/api/bugs', '/api/findings', '/api/metrics'];
   for (const pathname of hiddenOperationalPaths) {
-    const response = await publicWorker.fetch(new Request(`https://public.invalid${pathname}`), {
-      BOQA_BACKEND_URL: 'https://backend.invalid',
-    });
+    const response = await publicWorker.fetch(new Request(`https://public.invalid${pathname}`), { BOQA_BACKEND_URL: 'https://backend.invalid' });
     assert.equal(response.status, 404, `${pathname} must not be public`);
     assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
     assert.deepEqual(await response.json(), { error: 'not_found' });
@@ -117,7 +90,4 @@ async function run() {
   console.log('public/private boundary: PASS');
 }
 
-run().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+run().catch((error) => { console.error(error); process.exit(1); });
