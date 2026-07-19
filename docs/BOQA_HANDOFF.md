@@ -7,7 +7,7 @@ TIMEZONE=America/Argentina/Cordoba
 
 1. Producción verificada.
 2. Cloudflare y backend activos.
-3. HEAD remoto de `main`.
+3. HEAD remoto de `main` y de los PR activos.
 4. GitHub Actions y artifacts.
 5. Código del repositorio.
 6. Google Doc canónico `CONTEXTO BOQA`.
@@ -30,10 +30,11 @@ TIMEZONE=America/Argentina/Cordoba
 
 - `BRANCH=fix/boqa-public-private-boundary-v2`
 - `BASE_SHA=ede06de817d607e6717f6ea71f2e40aac68ea7a2`
-- `HEAD_SHA=fcf1f4c453cd66a38ed2109e8426bdd81bf36f28`
+- `HEAD_SHA=VERIFY_REMOTE_FROM_PR`
+- `LAST_CODE_SHA=7469e409d26381b86163d20687e7e5aa4b656d64`
 - `COMMIT_WORKER=5ae28ec99b63b5892d4e11b128268d9005a5fcc1`
 - `COMMIT_TEST=7469e409d26381b86163d20687e7e5aa4b656d64`
-- `COMMIT_HANDOFF=fcf1f4c453cd66a38ed2109e8426bdd81bf36f28`
+- `HANDOFF_SNAPSHOT_PARENT=d5fdc54f397d9731cf523b716ce6b9e969317c4b`
 - `FILES=worker.js; test/test-public-private-boundary.js; docs/BOQA_HANDOFF.md`
 - `VALIDATION_STATUS=PENDING_CI`
 - `PRODUCTION_IMPACT=false`
@@ -93,7 +94,7 @@ No leer, imprimir ni documentar valores. Los nombres `BOQA_API_KEY` y `BOQA_HMAC
 
 ## Next exact action
 
-1. Crear Draft PR desde `fix/boqa-public-private-boundary-v2` hacia `main` con head esperado `fcf1f4c453cd66a38ed2109e8426bdd81bf36f28`.
+1. Verificar el HEAD remoto de `fix/boqa-public-private-boundary-v2` y crear un Draft PR hacia `main` anclado a ese SHA.
 2. Exigir tests, Docker qualification, browser smoke y preview exacta.
 3. Verificar que rutas y assets privados respondan `404` sin revelar su propósito.
 4. Integrar primero este hardening si CI queda verde.
