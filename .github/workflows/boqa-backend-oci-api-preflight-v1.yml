@@ -1,0 +1,173 @@
+name: BOQA Backend OCI API Preflight V1
+
+on:
+  push:
+    branches:
+      - deploy/boqa-backend-production-v1
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-oci-api-preflight-v1
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SOURCE_SHA: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+      EXPECTED_PUBLIC_IP: 136.248.117.15
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID || secrets.OCI_TENANCY }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID || secrets.OCI_USER }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT || secrets.OCI_API_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY || secrets.OCI_API_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+      OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID || secrets.OCI_COMPARTMENT }}
+      OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID || secrets.BOQA_OCI_INSTANCE_OCID }}
+    steps:
+      - name: Checkout exact main source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+          persist-credentials: false
+
+      - name: Verify source identity
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test -z "$(git status --porcelain)"
+          mkdir -p output/backend-oci-api-preflight-v1
+          printf '{"source_sha":"%s","read_only":true,"production_changed":false,"deploy_performed":false}\n' "${SOURCE_SHA}" > output/backend-oci-api-preflight-v1/manifest.json
+
+      - name: Verify OCI API inputs
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${OCI_TENANCY_OCID:-}" ] || missing+=(OCI_TENANCY_OCID)
+          [ -n "${OCI_USER_OCID:-}" ] || missing+=(OCI_USER_OCID)
+          [ -n "${OCI_FINGERPRINT:-}" ] || missing+=(OCI_FINGERPRINT)
+          [ -n "${OCI_PRIVATE_KEY:-}" ] || missing+=(OCI_PRIVATE_KEY)
+          [ -n "${OCI_REGION:-}" ] || missing+=(OCI_REGION)
+          [ -n "${OCI_COMPARTMENT_OCID:-}" ] || missing+=(OCI_COMPARTMENT_OCID)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '%s\n' "${missing[@]}" | sed 's/^/MISSING_OCI_API_INPUT=/' > output/backend-oci-api-preflight-v1/missing-inputs.txt
+            exit 78
+          fi
+          echo 'OCI_API_INPUTS=PASS' > output/backend-oci-api-preflight-v1/inputs.txt
+
+      - name: Install OCI CLI
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          oci --version > output/backend-oci-api-preflight-v1/oci-cli-version.txt
+
+      - name: Configure isolated OCI profile
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 "$HOME/.oci"
+          printf '%s\n' "${OCI_PRIVATE_KEY}" > "$HOME/.oci/key.raw"
+          if openssl pkey -in "$HOME/.oci/key.raw" -noout >/dev/null 2>&1; then
+            mv "$HOME/.oci/key.raw" "$HOME/.oci/key.pem"
+          else
+            base64 -d "$HOME/.oci/key.raw" > "$HOME/.oci/key.pem" 2>/dev/null || {
+              echo 'OCI_PRIVATE_KEY_FORMAT=INVALID' > output/backend-oci-api-preflight-v1/key-format.txt
+              exit 78
+            }
+            rm -f "$HOME/.oci/key.raw"
+            openssl pkey -in "$HOME/.oci/key.pem" -noout >/dev/null 2>&1 || {
+              echo 'OCI_PRIVATE_KEY_FORMAT=INVALID_AFTER_BASE64_DECODE' > output/backend-oci-api-preflight-v1/key-format.txt
+              exit 78
+            }
+          fi
+          chmod 600 "$HOME/.oci/key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=${OCI_USER_OCID}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY_OCID}
+          region=${OCI_REGION}
+          key_file=${HOME}/.oci/key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          echo 'OCI_PRIVATE_KEY_FORMAT=VALID' > output/backend-oci-api-preflight-v1/key-format.txt
+
+      - name: Verify OCI identity read-only
+        run: |
+          set -Eeuo pipefail
+          oci iam region-subscription list --all --query 'data[].{region:"region-name",status:status}' > output/backend-oci-api-preflight-v1/region-subscriptions.json
+          jq -e 'length > 0' output/backend-oci-api-preflight-v1/region-subscriptions.json >/dev/null
+          echo 'OCI_IDENTITY_READ=PASS' > output/backend-oci-api-preflight-v1/identity.txt
+
+      - name: Resolve BOQA instance read-only
+        run: |
+          set -Eeuo pipefail
+          resolved=''
+          if [ -n "${OCI_INSTANCE_OCID:-}" ]; then
+            oci compute instance get --instance-id "${OCI_INSTANCE_OCID}" > /tmp/instance.json
+            resolved="${OCI_INSTANCE_OCID}"
+          else
+            oci compute instance list \
+              --compartment-id "${OCI_COMPARTMENT_OCID}" \
+              --lifecycle-state RUNNING \
+              --all > /tmp/instances.json
+            mapfile -t instance_ids < <(jq -r '.data[].id' /tmp/instances.json)
+            for instance_id in "${instance_ids[@]}"; do
+              oci compute vnic-attachment list \
+                --compartment-id "${OCI_COMPARTMENT_OCID}" \
+                --instance-id "${instance_id}" \
+                --all > /tmp/vnic-attachments.json
+              while IFS= read -r vnic_id; do
+                [ -n "$vnic_id" ] || continue
+                oci network vnic get --vnic-id "$vnic_id" > /tmp/vnic.json
+                public_ip=$(jq -r '.data."public-ip" // empty' /tmp/vnic.json)
+                if [ "$public_ip" = "${EXPECTED_PUBLIC_IP}" ]; then
+                  resolved="$instance_id"
+                  oci compute instance get --instance-id "$instance_id" > /tmp/instance.json
+                  break 2
+                fi
+              done < <(jq -r '.data[]."vnic-id"' /tmp/vnic-attachments.json)
+            done
+          fi
+          if [ -z "$resolved" ]; then
+            echo 'BOQA_INSTANCE_RESOLUTION=NOT_FOUND_BY_CONFIGURED_PUBLIC_IP' > output/backend-oci-api-preflight-v1/blocker.txt
+            exit 78
+          fi
+          printf '%s' "$resolved" > /tmp/instance-id
+          jq '{display_name:.data."display-name", lifecycle_state:.data."lifecycle-state", shape:.data.shape, availability_domain:.data."availability-domain"}' /tmp/instance.json > output/backend-oci-api-preflight-v1/instance-summary.json
+          printf '%s' "$resolved" | sha256sum | awk '{print $1}' > output/backend-oci-api-preflight-v1/instance-ocid-sha256.txt
+          rm -f /tmp/instances.json /tmp/vnic-attachments.json /tmp/vnic.json /tmp/instance.json
+
+      - name: Verify Instance Agent visibility read-only
+        run: |
+          set -Eeuo pipefail
+          instance_id=$(cat /tmp/instance-id)
+          oci instance-agent command-execution list \
+            --compartment-id "${OCI_COMPARTMENT_OCID}" \
+            --instance-id "$instance_id" \
+            --all > /tmp/command-executions.json
+          jq '{execution_count:(.data|length), latest:[.data[0:5][]? | {status, time_created:."time-created", time_updated:."time-updated"}]}' /tmp/command-executions.json > output/backend-oci-api-preflight-v1/command-executions-summary.json
+          rm -f /tmp/command-executions.json /tmp/instance-id
+          echo 'OCI_INSTANCE_AGENT_READ=PASS' > output/backend-oci-api-preflight-v1/result.txt
+
+      - name: Verify evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/backend-oci-api-preflight-v1
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload OCI API preflight evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-oci-api-preflight-v1-${{ env.SOURCE_SHA }}
+          path: output/backend-oci-api-preflight-v1/
+          if-no-files-found: error
+          retention-days: 14
