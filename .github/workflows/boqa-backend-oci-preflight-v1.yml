@@ -1,0 +1,151 @@
+name: BOQA Backend OCI Preflight V1
+
+on:
+  push:
+    branches:
+      - deploy/boqa-backend-production-v1
+  pull_request:
+    branches:
+      - main
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-oci-preflight-v1
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SOURCE_SHA: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+      BACKEND_HOST: ${{ secrets.BOQA_BACKEND_HOST || secrets.OCI_HOST || secrets.SSH_HOST }}
+      BACKEND_USER: ${{ secrets.BOQA_BACKEND_USER || secrets.OCI_USER || secrets.SSH_USER }}
+      BACKEND_SSH_KEY: ${{ secrets.BOQA_BACKEND_SSH_KEY || secrets.OCI_SSH_PRIVATE_KEY || secrets.SSH_PRIVATE_KEY }}
+      BACKEND_SSH_PORT: ${{ secrets.BOQA_BACKEND_SSH_PORT || secrets.OCI_SSH_PORT || '22' }}
+    steps:
+      - name: Checkout exact main source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ede06de817d607e6717f6ea71f2e40aac68ea7a2
+          persist-credentials: false
+
+      - name: Verify source identity
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_SHA}"
+          test -z "$(git status --porcelain)"
+
+      - name: Initialize evidence
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output/backend-oci-preflight-v1
+          printf '{"source_sha":"%s","read_only":true,"production_changed":false,"deploy_performed":false}\n' "${SOURCE_SHA}" > output/backend-oci-preflight-v1/manifest.json
+
+      - name: Verify remote access inputs
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${BACKEND_HOST:-}" ] || missing+=("BOQA_BACKEND_HOST or OCI_HOST or SSH_HOST")
+          [ -n "${BACKEND_USER:-}" ] || missing+=("BOQA_BACKEND_USER or OCI_USER or SSH_USER")
+          [ -n "${BACKEND_SSH_KEY:-}" ] || missing+=("BOQA_BACKEND_SSH_KEY or OCI_SSH_PRIVATE_KEY or SSH_PRIVATE_KEY")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '%s\n' "${missing[@]}" | sed 's/^/MISSING_ACCESS=/' | tee output/backend-oci-preflight-v1/missing-access.txt
+            exit 78
+          fi
+          printf '%s\n' "REMOTE_ACCESS_INPUTS=PASS" > output/backend-oci-preflight-v1/access-inputs.txt
+
+      - name: Prepare isolated SSH client
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "${BACKEND_SSH_KEY}" > "$HOME/.ssh/boqa_backend_key"
+          chmod 600 "$HOME/.ssh/boqa_backend_key"
+          ssh-keyscan -p "${BACKEND_SSH_PORT}" -H "${BACKEND_HOST}" > "$HOME/.ssh/known_hosts" 2> output/backend-oci-preflight-v1/ssh-keyscan-stderr.txt
+          test -s "$HOME/.ssh/known_hosts"
+          ssh-keygen -lf "$HOME/.ssh/known_hosts" > output/backend-oci-preflight-v1/host-key-fingerprint.txt
+
+      - name: Inspect backend host read-only
+        run: |
+          set -Eeuo pipefail
+          ssh -i "$HOME/.ssh/boqa_backend_key" \
+            -p "${BACKEND_SSH_PORT}" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=12 \
+            "${BACKEND_USER}@${BACKEND_HOST}" 'bash -se' > output/backend-oci-preflight-v1/remote-inventory.txt <<'REMOTE'
+          set -Eeuo pipefail
+          echo "REMOTE_CONNECTIVITY=PASS"
+          printf 'HOSTNAME='; hostname
+          printf 'KERNEL='; uname -sr
+          printf 'DOCKER_VERSION='; docker version --format '{{.Server.Version}}'
+          if docker compose version >/dev/null 2>&1; then
+            printf 'DOCKER_COMPOSE='; docker compose version --short
+          else
+            echo 'DOCKER_COMPOSE=UNAVAILABLE'
+          fi
+          echo 'RUNNING_CONTAINERS_BEGIN'
+          docker ps --format 'name={{.Names}} image={{.Image}} status={{.Status}} ports={{.Ports}}'
+          echo 'RUNNING_CONTAINERS_END'
+          echo 'PORT80_CANDIDATES_BEGIN'
+          docker ps --filter publish=80 --format '{{.ID}} {{.Names}} {{.Image}} {{.Ports}}'
+          echo 'PORT80_CANDIDATES_END'
+          if [ -d /var/lib/boqa/output ]; then
+            echo 'OUTPUT_PATH=EXISTS'
+            stat -c 'OUTPUT_OWNER=%U:%G OUTPUT_MODE=%a' /var/lib/boqa/output
+            du -sh /var/lib/boqa/output | awk '{print "OUTPUT_SIZE=" $1}'
+          else
+            echo 'OUTPUT_PATH=MISSING'
+          fi
+          candidate_count=$(docker ps --filter publish=80 --format '{{.ID}}' | wc -l | tr -d ' ')
+          echo "PORT80_CANDIDATE_COUNT=${candidate_count}"
+          if [ "${candidate_count}" = "1" ]; then
+            current=$(docker ps --filter publish=80 --format '{{.ID}}')
+            docker inspect --format 'CURRENT_CONTAINER_ID={{.Id}}\nCURRENT_NAME={{.Name}}\nCURRENT_IMAGE={{.Image}}\nCURRENT_RESTART={{.HostConfig.RestartPolicy.Name}}' "$current"
+            docker inspect --format '{{range .Mounts}}MOUNT type={{.Type}} source={{.Source}} destination={{.Destination}} rw={{.RW}}{{println}}{{end}}' "$current"
+            docker inspect --format '{{range $name, $cfg := .NetworkSettings.Networks}}NETWORK {{$name}}{{println}}{{end}}' "$current"
+          fi
+          set +e
+          health_code=$(curl -sS -o /tmp/boqa-health-body -w '%{http_code}' --max-time 10 http://127.0.0.1/api/health)
+          health_exit=$?
+          set -e
+          echo "LOCAL_HEALTH_CURL_EXIT=${health_exit}"
+          echo "LOCAL_HEALTH_HTTP=${health_code:-000}"
+          if [ -s /tmp/boqa-health-body ]; then
+            head -c 2000 /tmp/boqa-health-body | tr '\n' ' '
+            echo
+          fi
+          rm -f /tmp/boqa-health-body
+          REMOTE
+
+      - name: Enforce deploy preconditions
+        run: |
+          set -Eeuo pipefail
+          inventory=output/backend-oci-preflight-v1/remote-inventory.txt
+          grep -q '^REMOTE_CONNECTIVITY=PASS$' "$inventory"
+          grep -Eq '^DOCKER_VERSION=.+$' "$inventory"
+          grep -q '^OUTPUT_PATH=EXISTS$' "$inventory"
+          grep -q '^PORT80_CANDIDATE_COUNT=1$' "$inventory"
+          grep -q '^LOCAL_HEALTH_HTTP=200$' "$inventory"
+          printf '%s\n' 'BACKEND_DEPLOY_PREFLIGHT=PASS' > output/backend-oci-preflight-v1/result.txt
+
+      - name: Verify evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/backend-oci-preflight-v1
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload backend preflight evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-oci-preflight-v1-${{ env.SOURCE_SHA }}
+          path: output/backend-oci-preflight-v1/
+          if-no-files-found: error
+          retention-days: 14
