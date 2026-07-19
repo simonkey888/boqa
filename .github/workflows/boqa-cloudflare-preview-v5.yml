@@ -202,7 +202,14 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Smoke exact version preview
-        run: node scripts/cloudflare-preview-smoke-v5.js
+        run: |
+          set +e
+          node scripts/cloudflare-preview-smoke-v5.js
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            node scripts/cloudflare-compat-status-v5.js || true
+          fi
+          exit "$status"
 
       - name: Verify immutable evidence
         if: always()
