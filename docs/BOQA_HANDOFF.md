@@ -1,87 +1,87 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-19T14:49:00-03:00  
+LAST_VERIFIED_AT=2026-07-19T15:35:00-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
 ## Estado verificado
 
 - `REPOSITORY=simonkey888/boqa`
-- `MAIN_SHA=9570a9fdfb577c92c172f520cf2489d54fc4956b`
-- `LAST_MERGED_PR=PR #22`
+- `MAIN_SHA=bc6f45acefe693f3cc2940d91f715d11ee50da93`
+- `LAST_MERGED_PR=PR #23`
 - `PRODUCTION_SHA=INDETERMINADO`
-- Producción no fue modificada por PR #22 ni PR #23.
+- Producción no fue modificada por los flujos de preview ni preflight.
 
-## Frontera pública integrada
+## Producto integrado
 
-El Worker público oculta la superficie privada antes del proxy y de los assets. La API pública queda limitada a `GET /api/health` y `GET /api/hunter/status`; cualquier otra API responde `404` genérico y no llega al backend.
+- Frontera privada oculta en el Worker público.
+- API pública limitada a `GET /api/health` y `GET /api/hunter/status`.
+- Dashboard validado en desktop 1440, mobile 390 y mobile 360.
+- Browser y Docker finales sobre `main`: PASS.
 
-## PR #23 — mobile clarity v2
+## Diagnóstico Cloudflare concluido
 
-- `BRANCH=fix/boqa-mobile-clarity-v2`
-- `BASE_SHA=9570a9fdfb577c92c172f520cf2489d54fc4956b`
-- `VALIDATED_CODE_SHA=b9fde58a2cd0d2da18601476ef38364aaa5538cc`
-- `STATE=OPEN_DRAFT`
-- Este archivo es un descendiente documental del SHA validado; verificar el HEAD remoto antes del merge.
+Los builds exactos de PR #24 demostraron:
 
-Cambios validados:
+- Workers Builds configurado sólo para preview;
+- trigger productivo igual a cero;
+- build fijado a rama y SHA exactos;
+- versión y preview URL identificables;
+- deployment productivo idéntico antes y después;
+- `/health` del Worker: 200;
+- `/api/health` del backend: 200 y `status=ok`;
+- `/api/hunter/status` del backend activo: 404 HTML;
+- la ruta histórica `/api/defensive/status`: 404 HTML;
+- no existe un contrato hunter semánticamente válido en el backend productivo actual.
 
-1. códigos internos traducidos a textos legibles;
-2. timestamps compactos y deterministas en formato `es-AR`, con valor ISO accesible;
-3. SHA visible abreviado, con valor completo en metadata accesible;
-4. fuentes y paneles secundarios compactados en dos columnas para 360/390 px;
-5. fallback de una columna para pantallas menores a 340 px;
-6. copy de estados no disponibles simplificado sin inventar datos.
+No se mapeará el health del agente antiguo a `Hunter ACTIVE`: sería una afirmación falsa.
 
-### Evidencia
+## Flujo activo — Cloudflare preview v6
 
-- `BROWSER_RUN=29697489537` — SUCCESS
-- `BROWSER_ARTIFACT_ID=8445437653`
-- `BROWSER_DIGEST=sha256:2b5e266c2bea4c86300e7aefe8b39af726c088d8b0f0fbadc1e1cc0a2f0182ae`
-- `DOCKER_RUN=29697489554` — SUCCESS
-- `DOCKER_ARTIFACT_ID=8445444723`
-- `DOCKER_DIGEST=sha256:aa053fefe767869d7c0063c401d9ce36da174d1a198a54640a9368f8f6068b51`
+- `BRANCH=deploy/boqa-cloudflare-preview-v6`
+- `BASE_SHA=bc6f45acefe693f3cc2940d91f715d11ee50da93`
+- `STATUS=IN_PROGRESS`
 
-Browser smoke sobre el SHA validado:
+Objetivo del gate limpio:
 
-- desktop 1440: PASS;
-- mobile 390: PASS;
-- mobile 360: PASS;
-- texto humano y SHA accesible: PASS;
-- compactación mobile: PASS;
-- overflow horizontal: 0;
-- errores de página: 0;
-- errores críticos de consola: 0;
-- rutas privadas y operativas ocultas: PASS;
-- deploy realizado: false.
+1. construir una versión exacta mediante Builds API;
+2. demostrar que producción no cambia;
+3. validar rutas privadas y operativas ocultas;
+4. clasificar la preview como `PROMOTION_READY` o `BLOCKED_BACKEND_CONTRACT`;
+5. cuando el backend carezca de hunter, validar la degradación honesta del dashboard en desktop/390/360;
+6. concluir SUCCESS como gate operativo sólo si la clasificación y la evidencia son coherentes;
+7. mantener `promotion_ready=false` mientras falte el contrato backend.
 
-Docker qualification sobre el mismo SHA:
+El workflow puede quedar integrado aunque clasifique correctamente un bloqueo externo. Esa conclusión no autoriza promoción productiva.
 
-- instalación, sintaxis y suite completa: PASS;
-- integridad del diff: PASS;
-- identidad y arranque de imagen: PASS;
-- ejecución aislada final: PASS.
+## Backend preflight
 
-## Cloudflare y backend
+- `PR=25`
+- `STATUS=BLOCKED_BY_EXTERNAL_ACCESS`
+- SSH: faltan host remoto y clave bajo los nombres aceptados.
+- OCI API: faltan identidad, firma, región, compartimento y resolución de instancia.
+- Browser y Docker del preflight: SUCCESS.
+- No hubo conexión remota, deploy, restart ni modificación productiva.
 
-- Workers Builds permanece preview-only, sin trigger productivo.
-- PR #20 debe reconstruirse sobre el `main` posterior a PR #23.
-- La versión exacta validada debe promoverse sin recompilar.
-- PR #19 continúa bloqueado por falta de acceso remoto al host del backend.
-- Cloudflare no sustituye el runtime que ejecuta Node, Playwright y Docker.
+## Arquitectura de entrega decidida
+
+1. GitHub conserva código, PR, tests, Docker y browser smoke.
+2. Cloudflare Workers Builds crea una versión exacta sin tráfico.
+3. El gate clasifica compatibilidad y promotion readiness.
+4. Sólo una versión con `promotion_ready=true` puede promoverse.
+5. La promoción reutiliza la versión validada; no recompila.
+6. Rollback conserva y verifica la versión productiva anterior.
 
 ## Reglas permanentes
 
 - No validar infraestructura de terceros.
 - No trabajar directamente sobre `main`.
-- No exponer información privada u operativa innecesaria en la URL pública.
-- No confundir CI, preview, versión subida, deployment y producción activa.
+- No exponer información privada u operativa innecesaria.
+- No imprimir valores sensibles.
+- No inventar estado hunter desde health genérico.
+- No confundir gate exitoso con candidato promocionable.
 - No declarar producción actualizada sin versión, deployment, tráfico, health, browser smoke y rollback verificados.
 - Mantener sincronizados este archivo y el documento canónico de Drive.
 
 ## Siguiente acción exacta
 
-1. Exigir Browser Smoke y Docker Qualification verdes sobre este commit documental.
-2. Verificar HEAD y mergeabilidad de PR #23.
-3. Integrar PR #23 sólo con SHA esperado.
-4. Reconstruir la preview Cloudflare y el preflight backend sobre el nuevo `main`.
-5. Promover sólo la versión exacta validada y verificar producción más rollback.
+Agregar el gate preview v6 limpio, abrir Draft PR, exigir Browser y Docker verdes, obtener una clasificación Cloudflare verificable y fusionar únicamente el mecanismo de entrega. Mantener producción sin cambios y PR #25 bloqueado hasta disponer de acceso backend.
