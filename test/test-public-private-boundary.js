@@ -22,7 +22,7 @@ async function run() {
   assert(worker.includes("normalized.endsWith('/cobros.html')"));
   assert(worker.includes("normalized.endsWith('/cobros.js')"));
   assert(worker.includes("normalized.endsWith('/private.css')"));
-  assert(worker.includes('for (let pass = 0; pass < 3; pass += 1)'));
+  assert(worker.includes('for (let pass = 0; pass < 8; pass += 1)'));
   assert(worker.includes('decodeURIComponent(decoded)'));
   assert(worker.includes(".replace(/\\\\/g, '/')"));
   assert(worker.includes('if (isPrivateSurface(url.pathname))'));
@@ -32,6 +32,13 @@ async function run() {
   assert(worker.includes("'Cache-Control': 'no-store, max-age=0'"));
   assert(!worker.includes('isPrivateBilling'));
   assert(worker.indexOf('if (isPrivateSurface(url.pathname))') < worker.indexOf('if (env && env.ASSETS)'));
+
+  // The public edge exposes only the two contracts consumed by the public UI.
+  assert(worker.includes("'/api/health'"));
+  assert(worker.includes("'/api/hunter/status'"));
+  assert(!worker.includes("'/api/runtime/metrics'"));
+  assert(!worker.includes("'/api/defensive/status'"));
+  assert(!worker.includes("'/api/bugs'"));
 
   const moduleUrl = `data:text/javascript;base64,${Buffer.from(worker, 'utf8').toString('base64')}`;
   const workerModule = await import(moduleUrl);
@@ -45,6 +52,7 @@ async function run() {
     '/%63obros',
     '/%2563obros',
     '/%252563obros',
+    '/%252525252563obros',
     '//cobros',
     '/cobros.html',
     '/nested/cobros.html',
@@ -86,6 +94,22 @@ async function run() {
     } else {
       assert.equal(body, 'Not Found');
     }
+  }
+
+  const hiddenOperationalPaths = [
+    '/api/runtime/metrics',
+    '/api/defensive/status',
+    '/api/bugs',
+    '/api/findings',
+    '/api/metrics',
+  ];
+  for (const pathname of hiddenOperationalPaths) {
+    const response = await publicWorker.fetch(new Request(`https://public.invalid${pathname}`), {
+      BOQA_BACKEND_URL: 'https://backend.invalid',
+    });
+    assert.equal(response.status, 404, `${pathname} must not be public`);
+    assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0');
+    assert.deepEqual(await response.json(), { error: 'not_found' });
   }
 
   assert(!/DEMO_BUGS|DEMO_COVERAGE|DEMO_FINDINGS|DEMO_HEALTH|demoJsonEvidence/.test(worker));
