@@ -1,0 +1,303 @@
+name: BOQA Backend Execution Summary Recovery V3
+
+on:
+  pull_request:
+    branches:
+      - deploy/boqa-backend-readonly-inspection-v1
+    types:
+      - labeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-execution-summary-recovery-v3-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  recover-exact-execution-summary:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'authorized-backend-execution-summary-recovery-v3' &&
+      github.event.pull_request.number == 29 &&
+      github.event.pull_request.draft == true &&
+      github.event.pull_request.base.sha == 'fb1cc8bcfbf0f3d76d5f8860619e953266a388b6' &&
+      github.event.pull_request.head.ref == 'deploy/boqa-backend-readonly-recovery-v1' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner &&
+      contains(github.event.pull_request.body, 'BOQA_AUTONOMOUS_READONLY=AUTHORIZED') &&
+      github.run_attempt == 1 &&
+      github.run_number == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      RECOVERY_BASE_SHA: fb1cc8bcfbf0f3d76d5f8860619e953266a388b6
+      REQUIRED_BRANCH: deploy/boqa-backend-readonly-recovery-v1
+      EXPECTED_COMMAND_NAME: boqa-readonly-inspection-v1-fb1cc8bcfbf0f3d76d5f8860619e953266a388b6
+      EXPECTED_COMMAND_ID_SHA256: 30e89c9566194a082bbca401abc73f6d79bf011696fa14171df34827a6df636b
+      EVIDENCE_DIR: output/backend-execution-summary-recovery-v3
+
+    steps:
+      - name: Checkout exact recovery head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce exact authorization and two-file diff
+        env:
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          AUTH_LABEL: ${{ github.event.label.name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -Eeuo pipefail
+          test "$EVENT_PR_NUMBER" = 29
+          test "$EVENT_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$GITHUB_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$EVENT_BASE_SHA" = "$RECOVERY_BASE_SHA"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$AUTH_LABEL" = authorized-backend-execution-summary-recovery-v3
+          test "$EVENT_ACTOR" = "$REPOSITORY_OWNER"
+          test "$RUN_ATTEMPT" = 1
+          test "$RUN_NUMBER" = 1
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          git merge-base --is-ancestor "$RECOVERY_BASE_SHA" "$SOURCE_SHA"
+          cat > /tmp/expected-files <<'EOF'
+          .github/workflows/boqa-backend-execution-summary-recovery-v3.yml
+          test/test-backend-execution-summary-recovery-v3.js
+          EOF
+          git diff --name-only "$RECOVERY_BASE_SHA" "$SOURCE_SHA" | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Validate recovery policy
+        run: |
+          set -Eeuo pipefail
+          node test/test-backend-execution-summary-recovery-v3.js
+
+      - name: Initialize sanitized evidence
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          jq -n --arg source_sha "$SOURCE_SHA" --arg base_sha "$RECOVERY_BASE_SHA" '{
+            source_sha:$source_sha,
+            recovery_base_sha:$base_sha,
+            command_summary_resolved:false,
+            command_id_hash_matched:false,
+            execution_summary_resolved:false,
+            terminal_state_observed:false,
+            sanitized_output_recorded:false,
+            new_command_created:false,
+            command_canceled:false,
+            production_changed:false,
+            deploy_performed:false,
+            restart_performed:false,
+            rollback_executed:false
+          }' > "$EVIDENCE_DIR/manifest.json"
+          echo '{"command_get_used":false,"command_execution_get_used":false,"command_execution_list_used":true,"new_remote_operation_allowed":false}' > "$EVIDENCE_DIR/policy.json"
+
+      - name: Install pinned OCI CLI before secret exposure
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          test "$(oci --version)" = '3.89.2'
+          oci --version > "$EVIDENCE_DIR/oci-cli-version.txt"
+
+      - name: Configure isolated OCI profile
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID }}
+        run: |
+          set -Eeuo pipefail
+          set +x
+          missing=()
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION OCI_COMPARTMENT_OCID OCI_INSTANCE_OCID; do
+            [ -n "${!name:-}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '%s\n' "${missing[@]}" | sed 's/^/MISSING_INPUT=/' > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+          install -d -m 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/key.raw"
+          if openssl pkey -in "$HOME/.oci/key.raw" -noout >/dev/null 2>&1; then
+            mv "$HOME/.oci/key.raw" "$HOME/.oci/key.pem"
+          else
+            base64 -d "$HOME/.oci/key.raw" > "$HOME/.oci/key.pem"
+            rm -f "$HOME/.oci/key.raw"
+            openssl pkey -in "$HOME/.oci/key.pem" -noout >/dev/null
+          fi
+          chmod 600 "$HOME/.oci/key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=${OCI_USER_OCID}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY_OCID}
+          region=${OCI_REGION}
+          key_file=${HOME}/.oci/key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          printf '%s' "$OCI_COMPARTMENT_OCID" > /tmp/oci-compartment-id
+          printf '%s' "$OCI_INSTANCE_OCID" > /tmp/oci-instance-id
+          chmod 600 /tmp/oci-compartment-id /tmp/oci-instance-id
+          echo '{"canonical_inputs_present":true,"values_recorded":false,"secrets_step_scoped":true}' > "$EVIDENCE_DIR/inputs.json"
+
+      - name: Recover exact execution summary
+        run: |
+          set -Eeuo pipefail
+          set +x
+          compartment_id=$(cat /tmp/oci-compartment-id)
+          instance_id=$(cat /tmp/oci-instance-id)
+          oci compute instance get --instance-id "$instance_id" --no-retry > /tmp/instance.json
+          test "$(jq -r '.data."lifecycle-state" // empty' /tmp/instance.json)" = RUNNING
+          test "$(jq -r '.data.id // empty' /tmp/instance.json)" = "$instance_id"
+          test "$(jq -r '.data."compartment-id" // empty' /tmp/instance.json)" = "$compartment_id"
+
+          oci instance-agent command list --compartment-id "$compartment_id" --all --no-retry > /tmp/commands.json
+          match_count=$(jq --arg name "$EXPECTED_COMMAND_NAME" '[.data[] | select(."display-name" == $name)] | length' /tmp/commands.json)
+          if [ "$match_count" -ne 1 ]; then
+            printf 'EXISTING_COMMAND_MATCH_COUNT=%s\n' "$match_count" > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+          command_id=$(jq -r --arg name "$EXPECTED_COMMAND_NAME" '.data[] | select(."display-name" == $name) | (."instance-agent-command-id" // .instanceAgentCommandId // .id // empty)' /tmp/commands.json)
+          if [ -z "$command_id" ] || [ "$command_id" = null ]; then
+            echo 'COMMAND_ID_FIELD_MISSING' > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+          command_hash=$(printf '%s' "$command_id" | sha256sum | awk '{print $1}')
+          if [ "$command_hash" != "$EXPECTED_COMMAND_ID_SHA256" ]; then
+            echo 'COMMAND_ID_HASH_MISMATCH' > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+
+          oci instance-agent command-execution list \
+            --compartment-id "$compartment_id" \
+            --instance-id "$instance_id" \
+            --all --no-retry > /tmp/executions.json
+          jq --arg command_id "$command_id" '[.data[] | select(((."instance-agent-command-id" // .instanceAgentCommandId // ."command-id" // .commandId // "")) == $command_id)]' \
+            /tmp/executions.json > /tmp/matches.json
+          execution_count=$(jq 'length' /tmp/matches.json)
+          if [ "$execution_count" -ne 1 ]; then
+            printf 'EXECUTION_SUMMARY_MATCH_COUNT=%s\n' "$execution_count" > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+          jq '.[0]' /tmp/matches.json > /tmp/execution.json
+          state=$(jq -r '."lifecycle-state" // .lifecycleState // empty' /tmp/execution.json)
+          delivery=$(jq -r '."delivery-state" // .deliveryState // "UNKNOWN"' /tmp/execution.json)
+          output_type=$(jq -r '.content."output-type" // .content.outputType // empty' /tmp/execution.json)
+          exit_code=$(jq -r '.content."exit-code" // .content.exitCode // -1' /tmp/execution.json)
+          service_sha=$(jq -r '.content."text-sha256" // .content.textSha256 // empty' /tmp/execution.json)
+          jq -r '.content.text // "" | @base64' /tmp/execution.json > /tmp/output.b64
+          base64 -d /tmp/output.b64 > /tmp/output.txt
+          text_bytes=$(wc -c < /tmp/output.txt | tr -d ' ')
+          local_sha=$(sha256sum /tmp/output.txt | awk '{print $1}')
+          keys_sha=$(jq -r 'keys | sort | join("\n")' /tmp/execution.json | sha256sum | awk '{print $1}')
+
+          jq -n \
+            --arg command_id_sha256 "$command_hash" \
+            --arg lifecycle_state "$state" \
+            --arg delivery_state "$delivery" \
+            --arg output_type "$output_type" \
+            --argjson exit_code "$exit_code" \
+            --arg text_sha256 "$local_sha" \
+            --argjson text_bytes "$text_bytes" \
+            --arg summary_keys_sha256 "$keys_sha" \
+            '{
+              command_id_sha256:$command_id_sha256,
+              command_identity_matched:true,
+              execution_summary_match_count:1,
+              lifecycle_state:$lifecycle_state,
+              delivery_state:$delivery_state,
+              output_type:$output_type,
+              exit_code:$exit_code,
+              text_sha256:$text_sha256,
+              text_bytes:$text_bytes,
+              summary_keys_sha256:$summary_keys_sha256,
+              raw_output_recorded:false,
+              identifiers_recorded:false
+            }' > "$EVIDENCE_DIR/execution.json"
+          jq '.command_summary_resolved=true | .command_id_hash_matched=true | .execution_summary_resolved=true | .terminal_state_observed=true' \
+            "$EVIDENCE_DIR/manifest.json" > /tmp/manifest.json
+          mv /tmp/manifest.json "$EVIDENCE_DIR/manifest.json"
+
+          case "$state" in
+            SUCCEEDED) ;;
+            FAILED|TIMED_OUT|CANCELED)
+              printf 'EXISTING_COMMAND_TERMINAL_STATE=%s\n' "$state" > "$EVIDENCE_DIR/blocker.txt"
+              exit 78
+              ;;
+            *)
+              printf 'EXISTING_COMMAND_NONTERMINAL_STATE=%s\n' "${state:-UNAVAILABLE}" > "$EVIDENCE_DIR/blocker.txt"
+              exit 78
+              ;;
+          esac
+          test "$output_type" = TEXT
+          test "$exit_code" = 0
+          test "$text_bytes" -gt 0
+          test "$text_bytes" -le 1024
+          [[ "$service_sha" =~ ^[0-9a-f]{64}$ ]]
+          test "$service_sha" = "$local_sha"
+          jq -e '
+            .v == 1 and
+            (.class | IN("INSPECTED","BLOCKED_DOCKER_ACCESS","BLOCKED_CONTAINER_AMBIGUITY","BLOCKED_INSPECT_INCOMPLETE")) and
+            (.docker | IN("NO","DIRECT","SUDO_READ_ONLY")) and
+            .state_mutation_command_attempted == false and
+            (.containers | type == "number" and . >= 0) and
+            (.mounts | type == "number" and . >= 0) and
+            (.rw_mounts | type == "number" and . >= 0) and
+            (.output_mount | type == "boolean") and
+            (.port_bindings | type == "number" and . >= 0) and
+            (.rollback_count | type == "number" and . >= 0) and
+            (.health_http | test("^[0-9]{3}$")) and
+            (.health_json | type == "boolean") and
+            (.release_sha == "missing" or (.release_sha | test("^[0-9a-fA-F]{40}$"))) and
+            (.hunter_http | test("^[0-9]{3}$")) and
+            (.hunter_json | type == "boolean") and
+            (.log_lines | type == "number" and . >= 0 and . <= 200) and
+            (.log_critical | type == "number" and . >= 0) and
+            (.log_secret_terms | type == "number" and . >= 0)
+          ' /tmp/output.txt >/dev/null
+          cp /tmp/output.txt "$EVIDENCE_DIR/inspection.json"
+          classification=$(jq -r '.class' "$EVIDENCE_DIR/inspection.json")
+          jq '.sanitized_output_recorded=true' "$EVIDENCE_DIR/manifest.json" > /tmp/manifest.json
+          mv /tmp/manifest.json "$EVIDENCE_DIR/manifest.json"
+          printf 'EXECUTION_SUMMARY_RECOVERY=COMPLETE\nBACKEND_INSPECTION_CLASSIFICATION=%s\nBACKEND_DEPLOYABILITY=NOT_EVALUATED\n' "$classification" > "$EVIDENCE_DIR/result.txt"
+
+      - name: Remove temporary credentials and raw responses
+        if: always()
+        run: |
+          set +e
+          rm -rf "$HOME/.oci"
+          rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
+          rm -f /tmp/instance.json /tmp/commands.json /tmp/executions.json /tmp/matches.json /tmp/execution.json
+          rm -f /tmp/output.b64 /tmp/output.txt /tmp/manifest.json
+
+      - name: Verify sanitized evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd "$EVIDENCE_DIR"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-execution-summary-recovery-v3-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.EVIDENCE_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
