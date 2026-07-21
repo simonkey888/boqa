@@ -23,105 +23,71 @@ TIMEZONE=America/Argentina/Cordoba
 - INSTANCE_LIFECYCLE=`RUNNING`
 - INSTANCE_AGENT_VISIBILITY=`PASS`
 
-La preview exacta continúa bloqueada por contrato backend faltante y `promotion_ready=false`.
+La preview exacta continúa bloqueada por `BACKEND_HUNTER_CONTRACT_MISSING` y `promotion_ready=false`.
 
-## PR #28 — inspección read-only del backend
+## PR #28 — inspección read-only original
 
-- STATUS=`OPEN_DRAFT`
-- BASE_SHA=`335a76afc303b7411737a729bdff2a761ce67d39`
-- FINAL_AUDITED_HEAD=`fb1cc8bcfbf0f3d76d5f8860619e953266a388b6`
-- CHANGED_FILES=`3`
-- MERGEABLE=`true`
-
-Archivos:
-
-- `.github/scripts/boqa-backend-readonly-inspection-v1.sh`
-- `.github/workflows/boqa-backend-readonly-inspection-v1.yml`
-- `test/test-backend-readonly-inspection-v1.js`
-
-Auditoría previa:
-
-- Bash syntax: PASS.
-- Workflow structural parse: PASS.
-- Policy assertions: PASS.
-- Fixtures sintéticos: PASS o bloqueo esperado.
-- Script inline: `3684` bytes.
-- Salida sintética máxima: `756` bytes.
-- Cleanup previo al artifact: PASS.
-
-## Incidente de inspección 2026-07-21
-
+- STATUS=`CLOSED_NOT_MERGED`
+- HEAD_SHA=`fb1cc8bcfbf0f3d76d5f8860619e953266a388b6`
 - RUN_ID=`29824605280`
 - JOB_ID=`88614940825`
 - RESULT=`FAILURE_FAIL_CLOSED`
 - ARTIFACT_ID=`8492864714`
 - ARTIFACT_DIGEST=`sha256:6ffda86943624ddce8f8f3fca1e456fb8dfa4056a34a1203087f16e4f551b444`
 - ARTIFACT_CHECKSUMS=`7/7_VALID`
-- AUTHORIZATION_GATES=`PASS`
-- EXACT_INSTANCE_REVALIDATION=`PASS`
-- REMOTE_OPERATION_CREATED=`true`
+- COMMAND_CREATED=`true`
 - TERMINAL_STATE_OBSERVED=`false`
 - SANITIZED_OUTPUT_RECORDED=`false`
-- BLOCKER=`COMMAND_EXECUTION=NO_TERMINAL_STATE`
-- PRODUCTION_CHANGED=`false`
-- DEPLOY_PERFORMED=`false`
-- RESTART_PERFORMED=`false`
-- ROLLBACK_EXECUTED=`false`
+- NEW_COMMAND_RETRY=`false`
 
-La ejecución autorizada no devolvió estado terminal dentro de la ventana observada. No existe evidencia suficiente para clasificar el backend, validar hunter, confirmar persistencia ni evaluar rollback.
+PR #28 se cerró sin merge. La rama se conserva porque es la base exacta de PR #29.
 
-No hubo reintento. La autorización de una sola ejecución fue retirada al terminar el run.
-
-## PR #29 — collector read-only de recuperación
+## PR #29 — recuperación del resultado existente
 
 - STATUS=`OPEN_DRAFT`
-- BASE_BRANCH=`deploy/boqa-backend-readonly-inspection-v1`
 - BASE_SHA=`fb1cc8bcfbf0f3d76d5f8860619e953266a388b6`
-- HEAD_BRANCH=`deploy/boqa-backend-readonly-recovery-v1`
-- FINAL_AUDITED_HEAD=`9478ecec700371b5501a1bc385b5cacd823b5831`
+- HEAD_SHA=`a2a866d3d1d34bde20ab9e869c2aa380058cebab`
 - CHANGED_FILES=`2`
-- COMMITS=`7`
 - BEHIND_BASE=`0`
 - MERGEABLE=`true`
-- WORKFLOW_RUNS=`0`
-- RECOVERY_EXECUTED=`false`
-- NEW_REMOTE_OPERATION_CREATED=`false`
-- EXISTING_OPERATION_CANCELED=`false`
 
-Archivos:
+Archivos finales:
 
-- `.github/workflows/boqa-backend-readonly-recovery-v1.yml`
-- `test/test-backend-readonly-recovery-v1.js`
+- `.github/workflows/boqa-backend-execution-summary-recovery-v3.yml`
+- `test/test-backend-execution-summary-recovery-v3.js`
 
-El collector sólo lee la instancia exacta, localiza una única operación existente, autentica su identidad y payload y consulta su ejecución. No contiene creación, cancelación ni eliminación de operaciones remotas.
+### Diagnóstico de collectors anteriores
 
-Controles:
+- Run variable-gated `29829310438`: SKIPPED antes de ejecutar pasos.
+- Run autónomo `29829783699`: falló al autenticar el comando.
+- Artifact `8494781041`; digest `sha256:d94750571850491e6aba69f689d72bea95c18ac471d6b4b8c9a57a10fd0770f9`.
+- Diagnóstico `29830245100`: SUCCESS; confirmó una coincidencia por nombre, pero el collector leía el campo de ID equivocado.
+- Clasificador `29830535734`: SUCCESS; el valor incorrecto produjo `NotAuthorizedOrNotFound`/404.
+- Recuperación V2 `29831204462`: falló con `COMMAND_ID_HASH_MISMATCH`.
 
-- PR Draft, número, base, rama, repositorio, actor y SHA exactos.
-- Variable de autorización separada y etiqueta separada, todavía no configuradas.
-- Permisos GitHub limitados a `contents: read`.
-- OCI CLI fijada en `3.89.2`.
-- Todas las lecturas OCI usan `--no-retry`.
-- Payload original autenticado por SHA-256 `bf01b6b9988ac7d902ddd4cfd59a1ccb1b3bcef2168880a9b106e56b3e47fc41`.
-- Salida terminal limitada a 1024 bytes y checksum obligatorio.
-- Identificadores retenidos sólo mediante SHA-256.
-- Credenciales, payload e identificadores temporales eliminados antes del artifact.
+Causa corregida: `ListInstanceAgentCommands` expone el ID como `instance-agent-command-id`; leer `.id` producía la cadena `null`. No existe evidencia de un fallo IAM en este incidente.
 
-Validación:
+### Recuperación V3
 
-- Static trigger and permission policy: PASS.
-- Superficie OCI limitada a tres lecturas: PASS.
-- YAML parse: PASS.
-- Fixture sintético de resolución de operación existente: PASS.
-- Fixture sintético de identidad del payload: PASS.
-- Fixture sintético de estado terminal, checksum y esquema: PASS.
-- Objeto de inspección recuperado preservado: PASS.
-- Diff remoto: exactamente 2 archivos.
-- Runs sobre HEAD final: 0.
+- RUN_ID=`29831821481`
+- JOB_ID=`88638214819`
+- RESULT=`FAILURE_FAIL_CLOSED`
+- ARTIFACT_ID=`8495615436`
+- ARTIFACT_DIGEST=`sha256:30dab7da04881e6c70e6423558eac9ac66ba1cda6be7ba9f27e4014ec200c442`
+- ARTIFACT_CHECKSUMS=`6/6_VALID`
+- COMMAND_ID_HASH_MATCHED=`true`
+- EXECUTION_SUMMARY_MATCH_COUNT=`1`
+- LIFECYCLE_STATE=`ACCEPTED`
+- DELIVERY_STATE=`EXPIRED`
+- OUTPUT_BYTES=`0`
+- SANITIZED_OUTPUT_RECORDED=`false`
+- NEW_COMMAND_CREATED=`false`
+- COMMAND_CANCELED=`false`
+- PRODUCTION_CHANGED=`false`
 
-La prueba sintética detectó y corrigió antes de ejecución un defecto que sustituía el objeto recuperado por el booleano de validación JSON.
+El comando exacto fue identificado por el SHA-256 registrado en el artifact original. Su execution summary indica `ACCEPTED` y `EXPIRED`. Oracle define `EXPIRED` como entrega expirada porque la instancia no solicitó el comando. Por lo tanto, el payload de inspección no está demostrado como ejecutado y el backend continúa sin inspeccionar.
 
-PR #29 permanece inerte. No existe autorización para ejecutarlo.
+Todas las etiquetas temporales de PR #29 fueron retiradas. No habrá reintento automático.
 
 ## Producción preservada
 
@@ -135,28 +101,27 @@ Revalidar antes de cualquier promoción.
 
 ## Bloqueos vigentes
 
-- Resultado remoto todavía no recuperado.
-- Contrato hunter ausente o no verificado.
+- El plugin Run Command de Oracle Cloud Agent no retiró la operación existente antes de expirar.
+- Backend hunter no verificado.
+- Persistencia, imagen activa, release SHA y rollback no inspeccionados.
 - Preview no promocionable.
 - SHA productivo indeterminado.
-- Persistencia y rollback no inspeccionados.
-- PR #25, PR #28 y PR #29 permanecen Draft.
+- PR #25 y PR #29 permanecen Draft.
 
 ## Decisión operativa
 
-- No reejecutar PR #28.
-- No iniciar una segunda operación remota.
-- No ejecutar PR #29 sin autorización explícita contra su HEAD final.
+- No crear un segundo comando automáticamente.
+- No reejecutar PR #28 ni PR #29.
 - No mergear, desplegar ni promover.
+- Siguiente diagnóstico permitido: estado read-only del plugin Run Command y salud de Oracle Cloud Agent, sin comandos remotos.
 
 ## Estado documental
 
 - HANDOFF_BRANCH=`docs/boqa-handoff-pr25-reconstructed`
 - VERSIONED_HANDOFF_RECONCILED=`true`
-- CANONICAL_DRIVE_SYNC=`COMPLETE`
-- DOCUMENTED_PR28_HEAD=`fb1cc8bcfbf0f3d76d5f8860619e953266a388b6`
-- DOCUMENTED_PR29_HEAD=`9478ecec700371b5501a1bc385b5cacd823b5831`
+- CANONICAL_DRIVE_SYNC=`PENDING_EXPIRED_UPDATE`
+- DOCUMENTED_PR29_HEAD=`a2a866d3d1d34bde20ab9e869c2aa380058cebab`
 
 ## Siguiente acción exacta
 
-Auditar independientemente PR #29 sobre `9478ecec700371b5501a1bc385b5cacd823b5831`. Si no aparecen hallazgos materiales, solicitar autorización explícita separada antes de configurar su variable y aplicar una única etiqueta de recuperación.
+Crear y ejecutar un diagnóstico read-only del plugin Run Command de Oracle Cloud Agent para determinar por qué la entrega quedó `EXPIRED`, sin crear ni cancelar comandos.
