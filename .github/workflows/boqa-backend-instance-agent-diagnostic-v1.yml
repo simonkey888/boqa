@@ -19,7 +19,7 @@ jobs:
     if: >-
       github.event.action == 'labeled' &&
       github.event.label.name == 'authorized-backend-instance-agent-diagnostic' &&
-      github.event.pull_request.number == 0 &&
+      github.event.pull_request.number == 30 &&
       github.event.pull_request.draft == true &&
       github.event.pull_request.base.sha == 'a2a866d3d1d34bde20ab9e869c2aa380058cebab' &&
       github.event.pull_request.head.ref == 'deploy/boqa-backend-instance-agent-diagnostic-v1' &&
@@ -34,7 +34,7 @@ jobs:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
       DIAGNOSTIC_BASE_SHA: a2a866d3d1d34bde20ab9e869c2aa380058cebab
       REQUIRED_BRANCH: deploy/boqa-backend-instance-agent-diagnostic-v1
-      EXPECTED_PR_NUMBER: '0'
+      EXPECTED_PR_NUMBER: '30'
       AUTH_LABEL: ${{ github.event.label.name }}
       EVIDENCE_DIR: output/backend-instance-agent-diagnostic-v1
 
