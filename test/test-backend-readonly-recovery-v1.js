@@ -30,6 +30,7 @@ assert.match(workflow, /test "\$source_local_sha" = "\$EXPECTED_SCRIPT_SHA256"/)
 assert.match(workflow, /EXISTING_COMMAND_MATCH_COUNT/);
 assert.match(workflow, /EXISTING_COMMAND_RECOVERY=COMPLETE/);
 assert.match(workflow, /BACKEND_DEPLOYABILITY=NOT_EVALUATED/);
+assert.match(workflow, /' \/tmp\/recovered-output\.txt >\/dev\/null\n          cp \/tmp\/recovered-output\.txt "\$EVIDENCE_DIR\/inspection\.json"/);
 
 for (const operation of ['cr' + 'eate', 'can' + 'cel', 'de' + 'lete']) {
   assert.doesNotMatch(workflow, new RegExp(`oci\\s+instance-agent\\s+command\\s+${operation}\\b`));
