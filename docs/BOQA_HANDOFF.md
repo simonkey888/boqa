@@ -162,3 +162,31 @@ Estos IDs corresponden a la última evidencia auditada de Preview V6. Deben reva
 ## Siguiente acción exacta
 
 Resolver automáticamente y sin imprimir identificadores la instancia OCI propia y su compartimento. Crear después los siete repository secrets canónicos desde Cloud Shell temporal y reejecutar únicamente el preflight OCI de PR #25; no mergear ni desplegar.
+## Actualización 2026-07-21 — OCI control-plane validado
+
+- `PR=25`
+- `PR_STATUS=OPEN_DRAFT`
+- `HEAD_SHA=335a76afc303b7411737a729bdff2a761ce67d39`
+- `OCI_CONTROL_PLANE_PREFLIGHT=PASS`
+- `RUN_ID=29800920787`
+- `RUN_ATTEMPT=2`
+- `JOB_ID=88552486316`
+- `ARTIFACT_ID=8485009246`
+- `ARTIFACT_DIGEST=sha256:acb4e760daa146d6a253238333810480e1c7549c4523763602a87db91397e3d9`
+- `ARTIFACT_CHECKSUMS=9/9_VALID`
+- `OWNED_INSTANCE_RESOLVED=true`
+- `INSTANCE_LIFECYCLE=RUNNING`
+- `INSTANCE_AGENT_READ=true`
+- `NEW_COMMAND_EXECUTED=false`
+- `PRODUCTION_CHANGED=false`
+- `DEPLOY_PERFORMED=false`
+
+La ruta OCI API quedó validada. La ruta SSH no fue reejecutada.
+
+Bloqueos vigentes:
+
+- `BACKEND_HUNTER_CONTRACT_MISSING`
+- `PROMOTION_READY=false`
+- `PRODUCTION_SHA=INDETERMINADO`
+
+PR #25 permanece Draft. No mergear ni desplegar. El próximo trabajo debe inspeccionar backend, persistencia, release SHA y rollback de forma read-only y fail-closed.
