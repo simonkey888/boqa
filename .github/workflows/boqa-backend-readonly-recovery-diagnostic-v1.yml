@@ -139,11 +139,24 @@ jobs:
           command_id=$(jq -r --arg name "$EXPECTED_COMMAND_NAME" '.data[] | select(."display-name" == $name) | .id' /tmp/commands.json | head -n1)
           command_read=false
           if [ "$match_count" -eq 1 ] && [ -n "$command_id" ]; then
-            oci instance-agent command get --command-id "$command_id" --no-retry > /tmp/command.json
-            command_read=true
+            if oci instance-agent command get --command-id "$command_id" --no-retry > /tmp/command.json; then
+              command_read=true
+            else
+              echo '{"data":{}}' > /tmp/command.json
+            fi
           else
             echo '{"data":{}}' > /tmp/command.json
           fi
+
+          jq -r '.data.content.source.text // ""' /tmp/command.json > /tmp/source-text
+          source_local_sha=$(sha256sum /tmp/source-text | awk '{print $1}')
+          source_local_sha_match=false
+          [ "$source_local_sha" = "$EXPECTED_SCRIPT_SHA256" ] && source_local_sha_match=true
+          top_keys_sha=$(jq -r '.data // {} | keys | sort | join("\n")' /tmp/command.json | sha256sum | awk '{print $1}')
+          content_keys_sha=$(jq -r '.data.content // {} | keys | sort | join("\n")' /tmp/command.json | sha256sum | awk '{print $1}')
+          source_keys_sha=$(jq -r '.data.content.source // {} | keys | sort | join("\n")' /tmp/command.json | sha256sum | awk '{print $1}')
+          target_keys_sha=$(jq -r '.data.target // {} | keys | sort | join("\n")' /tmp/command.json | sha256sum | awk '{print $1}')
+
           jq -n \
             --argjson match_count "$match_count" \
             --argjson command_read "$command_read" \
@@ -151,11 +164,15 @@ jobs:
             --arg expected_compartment "$compartment_id" \
             --arg expected_instance "$instance_id" \
             --arg expected_sha "$EXPECTED_SCRIPT_SHA256" \
+            --argjson source_local_sha_match "$source_local_sha_match" \
+            --arg top_keys_sha "$top_keys_sha" \
+            --arg content_keys_sha "$content_keys_sha" \
+            --arg source_keys_sha "$source_keys_sha" \
+            --arg target_keys_sha "$target_keys_sha" \
             --slurpfile instance /tmp/instance.json \
             --slurpfile command /tmp/command.json \
             '($command[0].data // {}) as $c |
              ($instance[0].data // {}) as $i |
-             ($c.content.source.text // "") as $text |
              {
                exact_match_count:$match_count,
                command_read:$command_read,
@@ -171,22 +188,20 @@ jobs:
                timeout_match:((($c["timeout-in-seconds"] // $c.timeoutInSeconds // -1)) == 120),
                source_type_kebab:($c.content.source["source-type"] == "TEXT"),
                source_type_camel:($c.content.source.sourceType == "TEXT"),
-               source_text_present:($text | length > 0),
+               source_text_present:(($c.content.source.text // "") | length > 0),
                source_service_sha_kebab_present:(($c.content.source["text-sha256"] // "") | length > 0),
                source_service_sha_camel_present:(($c.content.source.textSha256 // "") | length > 0),
                source_service_sha_match:((($c.content.source["text-sha256"] // $c.content.source.textSha256 // "")) == $expected_sha),
-               source_local_sha_match:(if ($text|length)>0 then (($text|@base64d?) == null) else false end),
+               source_local_sha_match:$source_local_sha_match,
                output_type_kebab:($c.content.output["output-type"] == "TEXT"),
                output_type_camel:($c.content.output.outputType == "TEXT"),
-               top_keys_sha:(($c|keys|sort|join("\n"))|@base64),
-               content_keys_sha:((($c.content // {})|keys|sort|join("\n"))|@base64),
-               source_keys_sha:((($c.content.source // {})|keys|sort|join("\n"))|@base64),
-               target_keys_sha:((($c.target // {})|keys|sort|join("\n"))|@base64),
+               top_keys_sha256:$top_keys_sha,
+               content_keys_sha256:$content_keys_sha,
+               source_keys_sha256:$source_keys_sha,
+               target_keys_sha256:$target_keys_sha,
                identifiers_recorded:false,
                raw_payload_recorded:false
-             }' > /tmp/shape-pre.json
-          jq '.top_keys_sha=(.top_keys_sha|@sh) | .content_keys_sha=(.content_keys_sha|@sh) | .source_keys_sha=(.source_keys_sha|@sh) | .target_keys_sha=(.target_keys_sha|@sh)' /tmp/shape-pre.json > "$EVIDENCE_DIR/command-shape.json"
-          rm -f /tmp/shape-pre.json
+             }' > "$EVIDENCE_DIR/command-shape.json"
 
       - name: Remove temporary credentials and raw responses
         if: always()
@@ -194,7 +209,7 @@ jobs:
           set +e
           rm -rf "$HOME/.oci"
           rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
-          rm -f /tmp/instance.json /tmp/commands.json /tmp/command.json /tmp/shape-pre.json
+          rm -f /tmp/instance.json /tmp/commands.json /tmp/command.json /tmp/source-text
 
       - name: Verify diagnostic checksums
         if: always()
