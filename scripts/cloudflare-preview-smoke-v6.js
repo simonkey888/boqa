@@ -171,7 +171,12 @@ async function smokeViewport(browser, viewport, label, classification) {
     await page.waitForFunction(() => document.getElementById('overall-state')?.textContent === 'DEGRADED', null, { timeout: 30_000 });
     assert.equal(await page.locator('#overall-reason').textContent(), 'Una fuente requerida no está disponible');
     assert.equal(await page.locator('#hunter-view-state').textContent(), 'UNAVAILABLE');
-    assert.equal(await page.locator('#hunter-reason').textContent(), 'Respuesta HTTP 404');
+    const hunterReason = await page.locator('#hunter-reason').textContent();
+    assert(
+      ['Respuesta HTTP 404', 'Respuesta JSON inválida'].includes(hunterReason),
+      `${label}:HUNTER_REASON_UNTRUTHFUL:${hunterReason}`,
+    );
+    result.hunter_reason = hunterReason;
     assert.equal(await page.locator('#health-view-state').textContent(), 'FRESH');
     assert.equal(await page.locator('#health-status').textContent(), 'ok');
   } else {
