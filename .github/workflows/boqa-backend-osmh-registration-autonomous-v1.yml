@@ -1,0 +1,179 @@
+name: BOQA Backend OSMH Registration Autonomous V1
+
+on:
+  pull_request:
+    branches:
+      - deploy/boqa-backend-agent-compatibility-diagnostic-v1
+    types:
+      - labeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-osmh-registration-autonomous-v1-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  inspect-osmh-registration-autonomously:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'authorized-backend-osmh-registration-autonomous' &&
+      github.event.pull_request.number == 32 &&
+      github.event.pull_request.draft == true &&
+      github.event.pull_request.base.sha == '7cffe43e457b91ade200268cf43c782d127ecb1b' &&
+      github.event.pull_request.head.ref == 'deploy/boqa-backend-osmh-agent-inventory-v1' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner &&
+      contains(github.event.pull_request.body, 'BOQA_AUTONOMOUS_READONLY=AUTHORIZED') &&
+      github.run_attempt == 1 &&
+      github.run_number == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      DIAGNOSTIC_BASE_SHA: 7cffe43e457b91ade200268cf43c782d127ecb1b
+      REQUIRED_BRANCH: deploy/boqa-backend-osmh-agent-inventory-v1
+      EVIDENCE_DIR: output/backend-osmh-registration-autonomous-v1
+      SOURCE_WORKFLOW: .github/workflows/boqa-backend-osmh-registration-v1.yml
+
+    steps:
+      - name: Checkout exact authorized head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce standing authorization and exact diff
+        env:
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          AUTH_LABEL: ${{ github.event.label.name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -Eeuo pipefail
+          test "$EVENT_PR_NUMBER" = 32
+          test "$EVENT_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$GITHUB_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$EVENT_BASE_SHA" = "$DIAGNOSTIC_BASE_SHA"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$AUTH_LABEL" = authorized-backend-osmh-registration-autonomous
+          test "$EVENT_ACTOR" = "$REPOSITORY_OWNER"
+          test "$RUN_ATTEMPT" = 1
+          test "$RUN_NUMBER" = 1
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          git merge-base --is-ancestor "$DIAGNOSTIC_BASE_SHA" "$SOURCE_SHA"
+          cat > /tmp/expected-files <<'EOF'
+          .github/workflows/boqa-backend-osmh-registration-autonomous-v1.yml
+          .github/workflows/boqa-backend-osmh-registration-v1.yml
+          test/test-backend-osmh-registration-v1.js
+          EOF
+          git diff --name-only "$DIAGNOSTIC_BASE_SHA" "$SOURCE_SHA" | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Extract and validate audited read-only steps
+        run: |
+          set -Eeuo pipefail
+          node test/test-backend-osmh-registration-v1.js
+          mkdir -p /tmp/boqa-osmh-steps "$EVIDENCE_DIR"
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/boqa-backend-osmh-registration-v1.yml').read_text().splitlines()
+          wanted = {
+              'Configure isolated OCI profile': 'configure.sh',
+              'Diagnose OSMH registration': 'diagnose.sh',
+          }
+          for name, filename in wanted.items():
+              marker = f'      - name: {name}'
+              start = source.index(marker)
+              run_index = next(i for i in range(start + 1, len(source)) if source[i] == '        run: |')
+              end = next((i for i in range(run_index + 1, len(source)) if source[i].startswith('      - name: ')), len(source))
+              body = []
+              for line in source[run_index + 1:end]:
+                  if line.startswith('          '):
+                      body.append(line[10:])
+                  elif line.strip():
+                      raise SystemExit(f'unexpected indentation in {name}')
+                  else:
+                      body.append('')
+              target = Path('/tmp/boqa-osmh-steps') / filename
+              target.write_text('\n'.join(body) + '\n')
+              target.chmod(0o700)
+          forbidden = (' install ', ' update ', ' remove ', ' delete ', ' reboot ', ' restart ', ' enable ', ' disable ')
+          for file in Path('/tmp/boqa-osmh-steps').glob('*.sh'):
+              text = f' {file.read_text().lower()} '
+              if 'oci os-management-hub managed-instance list' in text:
+                  pass
+              for word in forbidden:
+                  if f'oci os-management-hub managed-instance{word}' in text:
+                      raise SystemExit(f'write operation rejected in {file.name}')
+              if 'oci instance-agent command' in text:
+                  raise SystemExit(f'command API rejected in {file.name}')
+          PY
+          jq -n --arg source_sha "$SOURCE_SHA" --arg base_sha "$DIAGNOSTIC_BASE_SHA" '{
+            source_sha:$source_sha,
+            diagnostic_base_sha:$base_sha,
+            standing_read_only_authorization:true,
+            compute_identity_matched:false,
+            osmh_list_attempted:false,
+            osmh_list_read:false,
+            osmh_instance_resolved:false,
+            diagnostic_complete:false,
+            write_operation_attempted:false,
+            command_api_used:false,
+            production_changed:false
+          }' > "$EVIDENCE_DIR/manifest.json"
+          echo '{"source_workflow_policy_valid":true,"manual_repository_variable_required":false,"write_operations_allowed":false}' > "$EVIDENCE_DIR/policy.json"
+
+      - name: Install pinned OCI CLI before secret exposure
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          test "$(oci --version)" = '3.89.2'
+          oci --version > "$EVIDENCE_DIR/oci-cli-version.txt"
+
+      - name: Configure isolated OCI profile
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID }}
+        run: /tmp/boqa-osmh-steps/configure.sh
+
+      - name: Diagnose OSMH registration
+        run: /tmp/boqa-osmh-steps/diagnose.sh
+
+      - name: Remove temporary credentials and raw responses
+        if: always()
+        run: |
+          set +e
+          rm -rf "$HOME/.oci" /tmp/boqa-osmh-steps
+          rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
+          rm -f /tmp/compute.json /tmp/osmh.json /tmp/osmh.err /tmp/managed.json /tmp/manifest.json
+
+      - name: Verify sanitized evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd "$EVIDENCE_DIR"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-osmh-registration-autonomous-v1-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.EVIDENCE_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
