@@ -19,7 +19,7 @@ jobs:
     if: >-
       github.event.action == 'labeled' &&
       github.event.label.name == 'authorized-backend-readonly-recovery' &&
-      github.event.pull_request.number == 0 &&
+      github.event.pull_request.number == 29 &&
       github.event.pull_request.draft == true &&
       github.event.pull_request.base.sha == 'fb1cc8bcfbf0f3d76d5f8860619e953266a388b6' &&
       github.event.pull_request.head.ref == 'deploy/boqa-backend-readonly-recovery-v1' &&
@@ -36,7 +36,7 @@ jobs:
       RECOVERY_BASE_SHA: fb1cc8bcfbf0f3d76d5f8860619e953266a388b6
       ORIGINAL_INSPECTION_SHA: fb1cc8bcfbf0f3d76d5f8860619e953266a388b6
       REQUIRED_BRANCH: deploy/boqa-backend-readonly-recovery-v1
-      EXPECTED_PR_NUMBER: '0'
+      EXPECTED_PR_NUMBER: '29'
       AUTH_LABEL: ${{ github.event.label.name }}
       AUTHORIZED_HEAD_SHA: ${{ vars.BOQA_BACKEND_RECOVERY_AUTHORIZED_SHA }}
       HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
