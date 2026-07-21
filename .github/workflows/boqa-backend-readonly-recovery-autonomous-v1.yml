@@ -1,0 +1,191 @@
+name: BOQA Backend Read-only Recovery Autonomous V1
+
+on:
+  pull_request:
+    branches:
+      - deploy/boqa-backend-readonly-inspection-v1
+    types:
+      - labeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-readonly-recovery-autonomous-v1-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  recover-existing-result-autonomously:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'authorized-backend-readonly-recovery-autonomous' &&
+      github.event.pull_request.number == 29 &&
+      github.event.pull_request.draft == true &&
+      github.event.pull_request.base.sha == 'fb1cc8bcfbf0f3d76d5f8860619e953266a388b6' &&
+      github.event.pull_request.head.ref == 'deploy/boqa-backend-readonly-recovery-v1' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner &&
+      contains(github.event.pull_request.body, 'BOQA_AUTONOMOUS_READONLY=AUTHORIZED') &&
+      github.run_attempt == 1 &&
+      github.run_number == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      RECOVERY_BASE_SHA: fb1cc8bcfbf0f3d76d5f8860619e953266a388b6
+      REQUIRED_BRANCH: deploy/boqa-backend-readonly-recovery-v1
+      EXPECTED_COMMAND_NAME: boqa-readonly-inspection-v1-fb1cc8bcfbf0f3d76d5f8860619e953266a388b6
+      EXPECTED_SCRIPT_SHA256: bf01b6b9988ac7d902ddd4cfd59a1ccb1b3bcef2168880a9b106e56b3e47fc41
+      EVIDENCE_DIR: output/backend-readonly-recovery-autonomous-v1
+      SOURCE_WORKFLOW: .github/workflows/boqa-backend-readonly-recovery-v1.yml
+
+    steps:
+      - name: Checkout exact authorized head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce autonomous authorization and exact diff
+        env:
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          AUTH_LABEL: ${{ github.event.label.name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -Eeuo pipefail
+          test "$EVENT_PR_NUMBER" = 29
+          test "$EVENT_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$GITHUB_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$EVENT_BASE_SHA" = "$RECOVERY_BASE_SHA"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$AUTH_LABEL" = authorized-backend-readonly-recovery-autonomous
+          test "$EVENT_ACTOR" = "$REPOSITORY_OWNER"
+          test "$RUN_ATTEMPT" = 1
+          test "$RUN_NUMBER" = 1
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          git merge-base --is-ancestor "$RECOVERY_BASE_SHA" "$SOURCE_SHA"
+          cat > /tmp/expected-files <<'EOF'
+          .github/workflows/boqa-backend-readonly-recovery-autonomous-v1.yml
+          .github/workflows/boqa-backend-readonly-recovery-v1.yml
+          test/test-backend-readonly-recovery-v1.js
+          EOF
+          git diff --name-only "$RECOVERY_BASE_SHA" "$SOURCE_SHA" | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Initialize evidence and extract audited steps
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$EVIDENCE_DIR" /tmp/boqa-recovery-steps
+          jq -n --arg source_sha "$SOURCE_SHA" --arg base_sha "$RECOVERY_BASE_SHA" '{
+            source_sha:$source_sha,
+            recovery_base_sha:$base_sha,
+            standing_read_only_authorization:true,
+            existing_command_resolved:false,
+            new_command_created:false,
+            command_canceled:false,
+            terminal_state_observed:false,
+            sanitized_output_recorded:false,
+            production_changed:false,
+            deploy_performed:false,
+            restart_performed:false,
+            rollback_executed:false
+          }' > "$EVIDENCE_DIR/manifest.json"
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/boqa-backend-readonly-recovery-v1.yml').read_text().splitlines()
+          names = {
+              'Configure isolated OCI profile and exact target': 'configure.sh',
+              'Resolve and authenticate exactly one existing command': 'resolve.sh',
+              'Recover terminal state and sanitized output from existing command': 'recover.sh',
+          }
+          for name, target in names.items():
+              marker = f'      - name: {name}'
+              try:
+                  start = source.index(marker)
+              except ValueError:
+                  raise SystemExit(f'missing audited step: {name}')
+              run_index = next(i for i in range(start + 1, len(source)) if source[i] == '        run: |')
+              end = next((i for i in range(run_index + 1, len(source)) if source[i].startswith('      - name: ')), len(source))
+              body = []
+              for line in source[run_index + 1:end]:
+                  if line.startswith('          '):
+                      body.append(line[10:])
+                  elif line.strip():
+                      raise SystemExit(f'unexpected indentation in {name}')
+                  else:
+                      body.append('')
+              path = Path('/tmp/boqa-recovery-steps') / target
+              path.write_text('\n'.join(body) + '\n')
+              path.chmod(0o700)
+          PY
+          node test/test-backend-readonly-recovery-v1.js
+          python - <<'PY'
+          from pathlib import Path
+          forbidden = ['cre'+'ate', 'can'+'cel', 'del'+'ete']
+          for path in Path('/tmp/boqa-recovery-steps').glob('*.sh'):
+              text = path.read_text()
+              for noun in ('command', 'command-execution'):
+                  for verb in forbidden:
+                      needle = f'oci instance-agent {noun} {verb}'
+                      if needle in text:
+                          raise SystemExit(f'forbidden operation in {path.name}')
+          PY
+          echo '{"collector_policy_valid":true,"manual_repository_variable_required":false,"new_remote_operation_allowed":false,"remote_operation_cancellation_allowed":false}' > "$EVIDENCE_DIR/policy.json"
+
+      - name: Install pinned OCI CLI before secret exposure
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          test "$(oci --version)" = '3.89.2'
+          oci --version > "$EVIDENCE_DIR/oci-cli-version.txt"
+
+      - name: Configure isolated OCI profile
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID }}
+        run: /tmp/boqa-recovery-steps/configure.sh
+
+      - name: Resolve authenticated existing command
+        run: /tmp/boqa-recovery-steps/resolve.sh
+
+      - name: Recover existing terminal result
+        run: /tmp/boqa-recovery-steps/recover.sh
+
+      - name: Remove temporary credentials and identifiers
+        if: always()
+        run: |
+          set +e
+          rm -rf "$HOME/.oci" /tmp/boqa-recovery-steps
+          rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
+          rm -f /tmp/instance.json /tmp/commands.json /tmp/command.json /tmp/command-id /tmp/original-script.b64 /tmp/original-script.txt
+          rm -f /tmp/execution.json /tmp/recovered-output.b64 /tmp/recovered-output.txt /tmp/manifest.json /tmp/execution-evidence.json
+
+      - name: Verify sanitized evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd "$EVIDENCE_DIR"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-readonly-recovery-autonomous-v1-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.EVIDENCE_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
