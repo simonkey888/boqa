@@ -1,0 +1,181 @@
+name: BOQA Backend OCI API Preflight V2
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-oci-api-preflight-v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oci-api-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID || secrets.OCI_TENANCY }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID || secrets.OCI_USER }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT || secrets.OCI_API_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY || secrets.OCI_API_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+      OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID || secrets.OCI_COMPARTMENT }}
+      OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID || secrets.BOQA_OCI_INSTANCE_OCID }}
+      EXPECTED_PUBLIC_IP: ${{ secrets.BOQA_BACKEND_PUBLIC_IP || secrets.OCI_PUBLIC_IP || secrets.BACKEND_PUBLIC_IP }}
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify identity and initialize evidence
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p output/backend-oci-api-preflight-v2
+          jq -n --arg sha "$SOURCE_SHA" '{source_sha:$sha,control_plane_only:true,production_changed:false,deploy_performed:false,command_executed:false}' \
+            > output/backend-oci-api-preflight-v2/manifest.json
+
+      - name: Verify explicit OCI API inputs
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${OCI_TENANCY_OCID:-}" ] || missing+=(OCI_TENANCY_OCID)
+          [ -n "${OCI_USER_OCID:-}" ] || missing+=(OCI_USER_OCID)
+          [ -n "${OCI_FINGERPRINT:-}" ] || missing+=(OCI_FINGERPRINT)
+          [ -n "${OCI_PRIVATE_KEY:-}" ] || missing+=(OCI_PRIVATE_KEY)
+          [ -n "${OCI_REGION:-}" ] || missing+=(OCI_REGION)
+          [ -n "${OCI_COMPARTMENT_OCID:-}" ] || missing+=(OCI_COMPARTMENT_OCID)
+          if [ -z "${OCI_INSTANCE_OCID:-}" ] && [ -z "${EXPECTED_PUBLIC_IP:-}" ]; then
+            missing+=(OCI_INSTANCE_OCID_OR_EXPECTED_PUBLIC_IP)
+          fi
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '%s\n' "${missing[@]}" | sed 's/^/MISSING_INPUT=/' > output/backend-oci-api-preflight-v2/blocker.txt
+            exit 78
+          fi
+          jq -n --arg resolution "$([ -n "${OCI_INSTANCE_OCID:-}" ] && echo explicit_instance || echo private_ip_match)" \
+            '{inputs_present:true,resolution_mode:$resolution,identifiers_recorded:false}' > output/backend-oci-api-preflight-v2/inputs.json
+
+      - name: Install OCI CLI
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          oci --version > output/backend-oci-api-preflight-v2/oci-cli-version.txt
+
+      - name: Configure isolated OCI profile
+        run: |
+          set -Eeuo pipefail
+          set +x
+          install -d -m 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/key.raw"
+          if openssl pkey -in "$HOME/.oci/key.raw" -noout >/dev/null 2>&1; then
+            mv "$HOME/.oci/key.raw" "$HOME/.oci/key.pem"
+          else
+            base64 -d "$HOME/.oci/key.raw" > "$HOME/.oci/key.pem" 2>/dev/null || {
+              echo 'OCI_PRIVATE_KEY_FORMAT=INVALID' > output/backend-oci-api-preflight-v2/blocker.txt
+              exit 78
+            }
+            rm -f "$HOME/.oci/key.raw"
+            openssl pkey -in "$HOME/.oci/key.pem" -noout >/dev/null 2>&1 || {
+              echo 'OCI_PRIVATE_KEY_FORMAT=INVALID_AFTER_DECODE' > output/backend-oci-api-preflight-v2/blocker.txt
+              exit 78
+            }
+          fi
+          chmod 600 "$HOME/.oci/key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=${OCI_USER_OCID}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY_OCID}
+          region=${OCI_REGION}
+          key_file=${HOME}/.oci/key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          echo 'OCI_PRIVATE_KEY_FORMAT=VALID' > output/backend-oci-api-preflight-v2/key-status.txt
+
+      - name: Verify OCI identity read-only
+        run: |
+          set -Eeuo pipefail
+          set +x
+          oci iam region-subscription list --all > /tmp/regions.json
+          count=$(jq '.data | length' /tmp/regions.json)
+          test "$count" -gt 0
+          jq -n --argjson count "$count" '{identity_read:true,region_subscription_count:$count,region_names_recorded:false}' \
+            > output/backend-oci-api-preflight-v2/identity.json
+          rm -f /tmp/regions.json
+
+      - name: Resolve owned instance read-only
+        run: |
+          set -Eeuo pipefail
+          set +x
+          resolved=''
+          if [ -n "${OCI_INSTANCE_OCID:-}" ]; then
+            resolved="$OCI_INSTANCE_OCID"
+            oci compute instance get --instance-id "$resolved" > /tmp/instance.json
+          else
+            oci compute instance list --compartment-id "$OCI_COMPARTMENT_OCID" --lifecycle-state RUNNING --all > /tmp/instances.json
+            mapfile -t ids < <(jq -r '.data[].id' /tmp/instances.json)
+            for instance_id in "${ids[@]}"; do
+              oci compute vnic-attachment list --compartment-id "$OCI_COMPARTMENT_OCID" --instance-id "$instance_id" --all > /tmp/attachments.json
+              while IFS= read -r vnic_id; do
+                [ -n "$vnic_id" ] || continue
+                oci network vnic get --vnic-id "$vnic_id" > /tmp/vnic.json
+                if [ "$(jq -r '.data."public-ip" // empty' /tmp/vnic.json)" = "$EXPECTED_PUBLIC_IP" ]; then
+                  resolved="$instance_id"
+                  oci compute instance get --instance-id "$resolved" > /tmp/instance.json
+                  break 2
+                fi
+              done < <(jq -r '.data[]."vnic-id"' /tmp/attachments.json)
+            done
+          fi
+          if [ -z "$resolved" ]; then
+            echo 'OWNED_INSTANCE_RESOLUTION=FAILED' > output/backend-oci-api-preflight-v2/blocker.txt
+            exit 78
+          fi
+          lifecycle=$(jq -r '.data."lifecycle-state"' /tmp/instance.json)
+          shape=$(jq -r '.data.shape // "unknown"' /tmp/instance.json)
+          test "$lifecycle" = RUNNING
+          printf '%s' "$resolved" > /tmp/instance-id
+          printf '%s' "$resolved" | sha256sum | awk '{print $1}' > output/backend-oci-api-preflight-v2/instance-id-sha256.txt
+          jq -n --arg lifecycle "$lifecycle" --arg shape "$shape" '{resolved:true,lifecycle_state:$lifecycle,shape:$shape,identifier_hashed:true,display_name_recorded:false,public_ip_recorded:false}' \
+            > output/backend-oci-api-preflight-v2/instance.json
+          rm -f /tmp/instances.json /tmp/attachments.json /tmp/vnic.json /tmp/instance.json
+
+      - name: Verify Instance Agent visibility read-only
+        run: |
+          set -Eeuo pipefail
+          set +x
+          instance_id=$(cat /tmp/instance-id)
+          oci instance-agent command-execution list \
+            --compartment-id "$OCI_COMPARTMENT_OCID" \
+            --instance-id "$instance_id" \
+            --all > /tmp/executions.json
+          count=$(jq '.data | length' /tmp/executions.json)
+          jq -n --argjson count "$count" '{instance_agent_read:true,prior_execution_count:$count,command_payloads_recorded:false,new_command_executed:false}' \
+            > output/backend-oci-api-preflight-v2/instance-agent.json
+          rm -f /tmp/executions.json /tmp/instance-id
+          echo 'OCI_CONTROL_PLANE_PREFLIGHT=PASS' > output/backend-oci-api-preflight-v2/result.txt
+
+      - name: Verify evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/backend-oci-api-preflight-v2
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized OCI API evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-oci-api-preflight-v2-${{ github.event.pull_request.head.sha }}
+          path: output/backend-oci-api-preflight-v2/
+          if-no-files-found: error
+          retention-days: 14

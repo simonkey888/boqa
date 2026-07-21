@@ -1,0 +1,208 @@
+name: BOQA Backend SSH Preflight V2
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-ssh-preflight-v2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ssh-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      BACKEND_HOST: ${{ secrets.BOQA_BACKEND_HOST || secrets.OCI_HOST || secrets.SSH_HOST || secrets.DEPLOY_HOST || secrets.SERVER_HOST || secrets.VPS_HOST }}
+      BACKEND_USER: ${{ secrets.BOQA_BACKEND_USER || secrets.OCI_USER || secrets.SSH_USER || secrets.DEPLOY_USER || secrets.SERVER_USER || secrets.VPS_USER }}
+      BACKEND_SSH_KEY: ${{ secrets.BOQA_BACKEND_SSH_KEY || secrets.OCI_SSH_PRIVATE_KEY || secrets.SSH_PRIVATE_KEY || secrets.DEPLOY_SSH_KEY || secrets.SERVER_SSH_KEY || secrets.VPS_SSH_KEY || secrets.OCI_SSH_KEY || secrets.SSH_KEY }}
+      BACKEND_SSH_PORT: ${{ secrets.BOQA_BACKEND_SSH_PORT || secrets.OCI_SSH_PORT || secrets.SSH_PORT || secrets.DEPLOY_SSH_PORT || '22' }}
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify identity and initialize evidence
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p output/backend-ssh-preflight-v2
+          jq -n --arg sha "$SOURCE_SHA" '{source_sha:$sha,read_only:true,production_changed:false,deploy_performed:false,restart_performed:false}' \
+            > output/backend-ssh-preflight-v2/manifest.json
+
+      - name: Verify explicit SSH access inputs
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${BACKEND_HOST:-}" ] || missing+=(BACKEND_HOST)
+          [ -n "${BACKEND_SSH_KEY:-}" ] || missing+=(BACKEND_SSH_KEY)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '%s\n' "${missing[@]}" | sed 's/^/MISSING_INPUT=/' > output/backend-ssh-preflight-v2/blocker.txt
+            exit 78
+          fi
+          jq -n --arg port "$BACKEND_SSH_PORT" --arg user_mode "$([ -n "${BACKEND_USER:-}" ] && echo explicit || echo discovery)" \
+            '{inputs_present:true,port:$port,user_mode:$user_mode,host_recorded:false}' > output/backend-ssh-preflight-v2/access.json
+
+      - name: Prepare isolated SSH client
+        run: |
+          set -Eeuo pipefail
+          set +x
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$BACKEND_SSH_KEY" > "$HOME/.ssh/key.raw"
+          if ssh-keygen -y -f "$HOME/.ssh/key.raw" >/dev/null 2>&1; then
+            mv "$HOME/.ssh/key.raw" "$HOME/.ssh/key"
+          else
+            base64 -d "$HOME/.ssh/key.raw" > "$HOME/.ssh/key" 2>/dev/null || {
+              echo 'SSH_KEY_FORMAT=INVALID' > output/backend-ssh-preflight-v2/blocker.txt
+              exit 78
+            }
+            rm -f "$HOME/.ssh/key.raw"
+            ssh-keygen -y -f "$HOME/.ssh/key" >/dev/null 2>&1 || {
+              echo 'SSH_KEY_FORMAT=INVALID_AFTER_DECODE' > output/backend-ssh-preflight-v2/blocker.txt
+              exit 78
+            }
+          fi
+          chmod 600 "$HOME/.ssh/key"
+          ssh-keyscan -p "$BACKEND_SSH_PORT" -H "$BACKEND_HOST" > "$HOME/.ssh/known_hosts" 2>/tmp/ssh-keyscan.err
+          test -s "$HOME/.ssh/known_hosts" || {
+            echo 'SSH_HOST_KEY_SCAN=FAILED' > output/backend-ssh-preflight-v2/blocker.txt
+            exit 78
+          }
+          echo 'SSH_KEY_AND_HOST_KEY=VALID' > output/backend-ssh-preflight-v2/key-status.txt
+
+      - name: Authenticate and inspect runtime read-only
+        run: |
+          set -Eeuo pipefail
+          set +x
+          users=()
+          if [ -n "${BACKEND_USER:-}" ]; then users+=("$BACKEND_USER"); fi
+          for candidate in ubuntu opc root debian admin ec2-user; do
+            seen=false
+            for current in "${users[@]:-}"; do [ "$current" = "$candidate" ] && seen=true; done
+            [ "$seen" = false ] && users+=("$candidate")
+          done
+
+          selected=''
+          attempts=0
+          for user in "${users[@]}"; do
+            attempts=$((attempts + 1))
+            if ssh -i "$HOME/.ssh/key" -p "$BACKEND_SSH_PORT" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=8 \
+              "$user@$BACKEND_HOST" 'printf BOQA_SSH_OK' 2>/dev/null | grep -q '^BOQA_SSH_OK$'; then
+              selected="$user"
+              break
+            fi
+          done
+          if [ -z "$selected" ]; then
+            jq -n --argjson attempts "$attempts" '{authenticated:false,attempt_count:$attempts,usernames_recorded:false}' \
+              > output/backend-ssh-preflight-v2/authentication.json
+            echo 'SSH_AUTHENTICATION=FAILED' > output/backend-ssh-preflight-v2/blocker.txt
+            exit 78
+          fi
+          jq -n --argjson attempts "$attempts" '{authenticated:true,attempt_count:$attempts,usernames_recorded:false}' \
+            > output/backend-ssh-preflight-v2/authentication.json
+
+          ssh -i "$HOME/.ssh/key" -p "$BACKEND_SSH_PORT" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=12 \
+            "$selected@$BACKEND_HOST" 'bash -se' > /tmp/remote-inventory.env <<'REMOTE'
+          set -Eeuo pipefail
+          echo 'REMOTE_CONNECTIVITY=PASS'
+          printf 'DOCKER_VERSION='; docker version --format '{{.Server.Version}}'
+          if docker compose version >/dev/null 2>&1; then echo 'DOCKER_COMPOSE=AVAILABLE'; else echo 'DOCKER_COMPOSE=UNAVAILABLE'; fi
+          count=$(docker ps --filter publish=80 --format '{{.ID}}' | wc -l | tr -d ' ')
+          echo "PORT80_CONTAINER_COUNT=$count"
+          if [ -d /var/lib/boqa/output ]; then echo 'OUTPUT_PATH=EXISTS'; else echo 'OUTPUT_PATH=MISSING'; fi
+          mount_present=false
+          if [ "$count" = 1 ]; then
+            current=$(docker ps --filter publish=80 --format '{{.ID}}')
+            if docker inspect -f '{{range .Mounts}}{{println .Source}}{{end}}' "$current" | grep -Fxq '/var/lib/boqa/output'; then mount_present=true; fi
+            restart=$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$current")
+          else
+            restart=unknown
+          fi
+          echo "OUTPUT_MOUNT_PRESENT=$mount_present"
+          echo "RESTART_POLICY=$restart"
+          health_code=$(curl -sS -o /tmp/health.json -w '%{http_code}' --max-time 12 http://127.0.0.1/api/health || true)
+          hunter_code=$(curl -sS -o /tmp/hunter.json -w '%{http_code}' --max-time 12 http://127.0.0.1/api/hunter/status || true)
+          echo "HEALTH_HTTP=${health_code:-000}"
+          echo "HUNTER_HTTP=${hunter_code:-000}"
+          if [ "${health_code:-000}" = 200 ]; then
+            printf 'HEALTH_STATUS='; jq -r '.status // "missing"' /tmp/health.json
+            printf 'RELEASE_SHA='; jq -r '.release_sha // "missing"' /tmp/health.json
+          fi
+          if [ "${hunter_code:-000}" = 200 ]; then
+            printf 'HUNTER_STATE='; jq -r '.state // "missing"' /tmp/hunter.json
+          fi
+          rm -f /tmp/health.json /tmp/hunter.json
+          REMOTE
+
+          getv() { sed -n "s/^$1=//p" /tmp/remote-inventory.env | tail -1; }
+          docker_version=$(getv DOCKER_VERSION)
+          compose=$(getv DOCKER_COMPOSE)
+          container_count=$(getv PORT80_CONTAINER_COUNT)
+          output_path=$(getv OUTPUT_PATH)
+          output_mount=$(getv OUTPUT_MOUNT_PRESENT)
+          restart_policy=$(getv RESTART_POLICY)
+          health_http=$(getv HEALTH_HTTP)
+          hunter_http=$(getv HUNTER_HTTP)
+          health_status=$(getv HEALTH_STATUS)
+          release_sha=$(getv RELEASE_SHA)
+          hunter_state=$(getv HUNTER_STATE)
+
+          jq -n \
+            --arg docker_version "$docker_version" \
+            --arg compose "$compose" \
+            --argjson container_count "${container_count:-0}" \
+            --arg output_path "$output_path" \
+            --arg output_mount "$output_mount" \
+            --arg restart_policy "$restart_policy" \
+            --argjson health_http "${health_http:-0}" \
+            --argjson hunter_http "${hunter_http:-0}" \
+            --arg health_status "$health_status" \
+            --arg release_sha "$release_sha" \
+            --arg hunter_state "$hunter_state" \
+            '{connectivity:true,docker_version:$docker_version,compose:$compose,port80_container_count:$container_count,output_path:$output_path,output_mount_present:($output_mount=="true"),restart_policy:$restart_policy,health_http:$health_http,hunter_http:$hunter_http,health_status:$health_status,release_sha:$release_sha,hunter_state:$hunter_state,host_recorded:false,container_ids_recorded:false}' \
+            > output/backend-ssh-preflight-v2/runtime.json
+          rm -f /tmp/remote-inventory.env
+
+      - name: Enforce backend readiness
+        run: |
+          set -Eeuo pipefail
+          file=output/backend-ssh-preflight-v2/runtime.json
+          jq -e '
+            .connectivity == true and
+            (.docker_version | length) > 0 and
+            .port80_container_count == 1 and
+            .output_path == "EXISTS" and
+            .output_mount_present == true and
+            .health_http == 200 and
+            .hunter_http == 200 and
+            .health_status == "ok"
+          ' "$file" >/dev/null
+          echo 'BACKEND_SSH_PREFLIGHT=PASS' > output/backend-ssh-preflight-v2/result.txt
+
+      - name: Verify evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd output/backend-ssh-preflight-v2
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized SSH preflight evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-ssh-preflight-v2-${{ github.event.pull_request.head.sha }}
+          path: output/backend-ssh-preflight-v2/
+          if-no-files-found: error
+          retention-days: 14
