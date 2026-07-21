@@ -1,0 +1,325 @@
+name: BOQA Backend Read-only Inspection V1
+
+on:
+  pull_request:
+    branches:
+      - deploy/boqa-backend-preflight-v2
+    types:
+      - labeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-readonly-inspection-v1
+  cancel-in-progress: false
+
+jobs:
+  inspect-backend-read-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      STACK_BASE_SHA: 335a76afc303b7411737a729bdff2a761ce67d39
+      REQUIRED_BRANCH: deploy/boqa-backend-readonly-inspection-v1
+      AUTH_LABEL: ${{ github.event.label.name }}
+      HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+      AUTHORIZED_HEAD_SHA: ${{ vars.BOQA_BACKEND_INSPECTION_AUTHORIZED_SHA }}
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+      OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+      OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID }}
+      EVIDENCE_DIR: output/backend-readonly-inspection-v1
+
+    steps:
+      - name: Checkout exact authorized head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce manual authorization and immutable scope
+        run: |
+          set -Eeuo pipefail
+          test "$GITHUB_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$AUTH_LABEL" = authorized-backend-readonly-inspection
+          test -n "$AUTHORIZED_HEAD_SHA"
+          test "$AUTHORIZED_HEAD_SHA" = "$SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          git merge-base --is-ancestor "$STACK_BASE_SHA" "$SOURCE_SHA"
+
+          cat > /tmp/expected-files <<'EOF'
+          .github/scripts/boqa-backend-readonly-inspection-v1.sh
+          .github/workflows/boqa-backend-readonly-inspection-v1.yml
+          test/test-backend-readonly-inspection-v1.js
+          EOF
+          git diff --name-only "$STACK_BASE_SHA" "$SOURCE_SHA" | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+          mkdir -p "$EVIDENCE_DIR"
+          jq -n \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg stack_base_sha "$STACK_BASE_SHA" \
+            '{
+              source_sha:$source_sha,
+              stack_base_sha:$stack_base_sha,
+              label_gated_only:true,
+              authorized_sha_required:true,
+              read_only_intent:true,
+              command_created:false,
+              command_executed:false,
+              production_changed:false,
+              deploy_performed:false,
+              restart_performed:false,
+              rollback_executed:false
+            }' > "$EVIDENCE_DIR/manifest.json"
+
+      - name: Validate fixed inspection script
+        run: |
+          set -Eeuo pipefail
+          script=.github/scripts/boqa-backend-readonly-inspection-v1.sh
+          bash -n "$script"
+          bytes=$(wc -c < "$script" | tr -d ' ')
+          test "$bytes" -le 4000
+          test -z "$(grep -n $'\r' "$script" || true)"
+          if grep -Eiq '(^|[;&|[:space:]])(rm|mv|cp|install|chmod|chown|mkdir|touch|truncate|tee|dd|kill|pkill|reboot|shutdown|systemctl|service|apt|yum|dnf)([;&|[:space:]]|$)' "$script"; then
+            echo 'SCRIPT_POLICY=FORBIDDEN_HOST_MUTATION' > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+          if grep -Eiq 'docker[[:space:]]+(start|stop|restart|rm|rmi|pull|push|build|run|exec|update|rename|tag|network|volume|compose)' "$script"; then
+            echo 'SCRIPT_POLICY=FORBIDDEN_DOCKER_MUTATION' > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+          sha256sum "$script" | awk '{print $1}' > "$EVIDENCE_DIR/script-sha256.txt"
+          jq -n --argjson bytes "$bytes" '{bash_syntax:true,bytes:$bytes,max_bytes:4000,mutation_denylist_passed:true}' \
+            > "$EVIDENCE_DIR/script-validation.json"
+
+      - name: Verify complete canonical OCI inputs
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          [ -n "${OCI_TENANCY_OCID:-}" ] || missing+=(OCI_TENANCY_OCID)
+          [ -n "${OCI_USER_OCID:-}" ] || missing+=(OCI_USER_OCID)
+          [ -n "${OCI_FINGERPRINT:-}" ] || missing+=(OCI_FINGERPRINT)
+          [ -n "${OCI_PRIVATE_KEY:-}" ] || missing+=(OCI_PRIVATE_KEY)
+          [ -n "${OCI_REGION:-}" ] || missing+=(OCI_REGION)
+          [ -n "${OCI_COMPARTMENT_OCID:-}" ] || missing+=(OCI_COMPARTMENT_OCID)
+          [ -n "${OCI_INSTANCE_OCID:-}" ] || missing+=(OCI_INSTANCE_OCID)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '%s\n' "${missing[@]}" | sed 's/^/MISSING_INPUT=/' > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+          echo '{"canonical_inputs_present":true,"values_recorded":false}' > "$EVIDENCE_DIR/inputs.json"
+
+      - name: Install pinned OCI CLI
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          oci --version > "$EVIDENCE_DIR/oci-cli-version.txt"
+
+      - name: Configure isolated OCI profile
+        run: |
+          set -Eeuo pipefail
+          set +x
+          install -d -m 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/key.raw"
+          if openssl pkey -in "$HOME/.oci/key.raw" -noout >/dev/null 2>&1; then
+            mv "$HOME/.oci/key.raw" "$HOME/.oci/key.pem"
+          else
+            base64 -d "$HOME/.oci/key.raw" > "$HOME/.oci/key.pem" 2>/dev/null
+            rm -f "$HOME/.oci/key.raw"
+            openssl pkey -in "$HOME/.oci/key.pem" -noout >/dev/null 2>&1
+          fi
+          chmod 600 "$HOME/.oci/key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=${OCI_USER_OCID}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY_OCID}
+          region=${OCI_REGION}
+          key_file=${HOME}/.oci/key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          echo 'OCI_PRIVATE_KEY_FORMAT=VALID' > "$EVIDENCE_DIR/key-status.txt"
+
+      - name: Revalidate exact instance and control plane
+        run: |
+          set -Eeuo pipefail
+          set +x
+          oci compute instance get \
+            --instance-id "$OCI_INSTANCE_OCID" \
+            --no-retry > /tmp/instance.json
+          lifecycle=$(jq -r '.data."lifecycle-state"' /tmp/instance.json)
+          test "$lifecycle" = RUNNING
+
+          oci instance-agent command-execution list \
+            --compartment-id "$OCI_COMPARTMENT_OCID" \
+            --instance-id "$OCI_INSTANCE_OCID" \
+            --all \
+            --no-retry > /tmp/prior-executions.json
+          prior_count=$(jq '.data | length' /tmp/prior-executions.json)
+          instance_hash=$(printf '%s' "$OCI_INSTANCE_OCID" | sha256sum | awk '{print $1}')
+
+          jq -n \
+            --arg lifecycle "$lifecycle" \
+            --arg instance_hash "$instance_hash" \
+            --argjson prior_count "$prior_count" \
+            '{
+              instance_resolved:true,
+              lifecycle_state:$lifecycle,
+              instance_id_sha256:$instance_hash,
+              prior_execution_count:$prior_count,
+              identifiers_recorded:false
+            }' > "$EVIDENCE_DIR/control-plane.json"
+          rm -f /tmp/instance.json /tmp/prior-executions.json
+
+      - name: Create one fixed read-only command
+        run: |
+          set -Eeuo pipefail
+          set +x
+          script=.github/scripts/boqa-backend-readonly-inspection-v1.sh
+          jq -n --rawfile text "$script" \
+            '{source:{sourceType:"TEXT",text:$text},output:{outputType:"TEXT"}}' \
+            > /tmp/content.json
+          jq -n --arg instance_id "$OCI_INSTANCE_OCID" \
+            '{instanceId:$instance_id}' > /tmp/target.json
+
+          set +e
+          command_id=$(
+            oci instance-agent command create \
+              --compartment-id "$OCI_COMPARTMENT_OCID" \
+              --content file:///tmp/content.json \
+              --target file:///tmp/target.json \
+              --timeout-in-seconds 120 \
+              --display-name "boqa-readonly-inspection-v1-${GITHUB_RUN_ID}" \
+              --no-retry \
+              --query data.id \
+              --raw-output 2>/tmp/create.err
+          )
+          create_status=$?
+          set -e
+          if [ "$create_status" -ne 0 ] || [ -z "$command_id" ]; then
+            echo 'COMMAND_CREATE=FAILED_NO_RETRY' > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+
+          printf '%s' "$command_id" > /tmp/command-id
+          command_hash=$(printf '%s' "$command_id" | sha256sum | awk '{print $1}')
+          jq --arg command_hash "$command_hash" \
+            '.command_created=true | .command_id_sha256=$command_hash' \
+            "$EVIDENCE_DIR/manifest.json" > /tmp/manifest.json
+          mv /tmp/manifest.json "$EVIDENCE_DIR/manifest.json"
+          rm -f /tmp/content.json /tmp/target.json /tmp/create.err
+
+      - name: Retrieve and sanitize execution result
+        run: |
+          set -Eeuo pipefail
+          set +x
+          command_id=$(cat /tmp/command-id)
+          state=''
+          for _ in $(seq 1 36); do
+            if oci instance-agent command-execution get \
+              --command-id "$command_id" \
+              --instance-id "$OCI_INSTANCE_OCID" \
+              --no-retry > /tmp/execution.json 2>/dev/null; then
+              state=$(jq -r '.data."lifecycle-state" // empty' /tmp/execution.json)
+              case "$state" in
+                SUCCEEDED|FAILED|TIMED_OUT|CANCELED) break ;;
+              esac
+            fi
+            sleep 5
+          done
+
+          case "$state" in
+            SUCCEEDED|FAILED|TIMED_OUT|CANCELED) ;;
+            *)
+              echo 'COMMAND_EXECUTION=NO_TERMINAL_STATE' > "$EVIDENCE_DIR/blocker.txt"
+              exit 78
+              ;;
+          esac
+
+          exit_code=$(jq -r '.data.content."exit-code" // -1' /tmp/execution.json)
+          service_sha=$(jq -r '.data.content."text-sha256" // empty' /tmp/execution.json)
+          jq -r '.data.content.text // "" | @base64' /tmp/execution.json > /tmp/inspection-output.b64
+          base64 -d /tmp/inspection-output.b64 > /tmp/inspection-output.txt
+          text_bytes=$(wc -c < /tmp/inspection-output.txt | tr -d ' ')
+          local_sha=$(sha256sum /tmp/inspection-output.txt | awk '{print $1}')
+          test "$text_bytes" -le 1024
+          [ -z "$service_sha" ] || test "$service_sha" = "$local_sha"
+          jq -e '
+            .v == 1 and
+            (.class | type == "string") and
+            .mutated == false and
+            (.containers | type == "number") and
+            (.health_http | type == "string") and
+            (.hunter_http | type == "string")
+          ' /tmp/inspection-output.txt > "$EVIDENCE_DIR/inspection.json"
+
+          classification=$(jq -r '.class' "$EVIDENCE_DIR/inspection.json")
+          jq -n \
+            --arg lifecycle_state "$state" \
+            --argjson exit_code "$exit_code" \
+            --arg text_sha256 "$local_sha" \
+            --argjson text_bytes "$text_bytes" \
+            --arg classification "$classification" \
+            '{
+              lifecycle_state:$lifecycle_state,
+              exit_code:$exit_code,
+              text_sha256:$text_sha256,
+              text_bytes:$text_bytes,
+              classification:$classification,
+              raw_output_recorded:false
+            }' > "$EVIDENCE_DIR/execution.json"
+
+          jq '.command_executed=true' "$EVIDENCE_DIR/manifest.json" > /tmp/manifest.json
+          mv /tmp/manifest.json "$EVIDENCE_DIR/manifest.json"
+          rm -f /tmp/execution.json /tmp/command-id /tmp/inspection-output.b64 /tmp/inspection-output.txt
+
+      - name: Enforce read-only inspection completeness
+        run: |
+          set -Eeuo pipefail
+          test "$(jq -r '.lifecycle_state' "$EVIDENCE_DIR/execution.json")" = SUCCEEDED
+          test "$(jq -r '.exit_code' "$EVIDENCE_DIR/execution.json")" = 0
+          test "$(jq -r '.classification' "$EVIDENCE_DIR/execution.json")" = INSPECTED
+          jq -e '
+            .mutated == false and
+            .containers == 1 and
+            .docker != "NO" and
+            (.image_ref_sha | test("^[0-9a-f]{64}$")) and
+            (.image_id_sha | test("^[0-9a-f]{64}$")) and
+            (.rollback_set_sha | test("^$|^[0-9a-f]{64}$")) and
+            (.hunter_keys_sha | test("^[0-9a-f]{64}$"))
+          ' "$EVIDENCE_DIR/inspection.json" >/dev/null
+          echo 'BACKEND_READONLY_INSPECTION=PASS' > "$EVIDENCE_DIR/result.txt"
+
+      - name: Verify sanitized evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd "$EVIDENCE_DIR"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized inspection evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-readonly-inspection-v1-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.EVIDENCE_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove temporary credentials
+        if: always()
+        run: |
+          set +e
+          rm -rf "$HOME/.oci"
+          rm -f /tmp/instance.json /tmp/prior-executions.json /tmp/content.json /tmp/target.json
+          rm -f /tmp/create.err /tmp/execution.json /tmp/command-id /tmp/manifest.json
+          rm -f /tmp/inspection-output.b64 /tmp/inspection-output.txt
