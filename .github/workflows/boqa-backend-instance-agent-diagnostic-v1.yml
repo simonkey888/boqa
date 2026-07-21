@@ -1,0 +1,325 @@
+name: BOQA Backend Instance Agent Diagnostic V1
+
+on:
+  pull_request:
+    branches:
+      - deploy/boqa-backend-readonly-recovery-v1
+    types:
+      - labeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-instance-agent-diagnostic-v1-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose-instance-agent-read-only:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'authorized-backend-instance-agent-diagnostic' &&
+      github.event.pull_request.number == 0 &&
+      github.event.pull_request.draft == true &&
+      github.event.pull_request.base.sha == 'a2a866d3d1d34bde20ab9e869c2aa380058cebab' &&
+      github.event.pull_request.head.ref == 'deploy/boqa-backend-instance-agent-diagnostic-v1' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner &&
+      contains(github.event.pull_request.body, 'BOQA_AUTONOMOUS_READONLY=AUTHORIZED') &&
+      github.run_attempt == 1 &&
+      github.run_number == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      DIAGNOSTIC_BASE_SHA: a2a866d3d1d34bde20ab9e869c2aa380058cebab
+      REQUIRED_BRANCH: deploy/boqa-backend-instance-agent-diagnostic-v1
+      EXPECTED_PR_NUMBER: '0'
+      AUTH_LABEL: ${{ github.event.label.name }}
+      EVIDENCE_DIR: output/backend-instance-agent-diagnostic-v1
+
+    steps:
+      - name: Checkout exact diagnostic head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce exact authorization and two-file diff
+        env:
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -Eeuo pipefail
+          test "$EVENT_PR_NUMBER" = "$EXPECTED_PR_NUMBER"
+          test "$EVENT_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$GITHUB_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$EVENT_BASE_SHA" = "$DIAGNOSTIC_BASE_SHA"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$AUTH_LABEL" = authorized-backend-instance-agent-diagnostic
+          test "$EVENT_ACTOR" = "$REPOSITORY_OWNER"
+          test "$RUN_ATTEMPT" = 1
+          test "$RUN_NUMBER" = 1
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          git merge-base --is-ancestor "$DIAGNOSTIC_BASE_SHA" "$SOURCE_SHA"
+          cat > /tmp/expected-files <<'EOF'
+          .github/workflows/boqa-backend-instance-agent-diagnostic-v1.yml
+          test/test-backend-instance-agent-diagnostic-v1.js
+          EOF
+          git diff --name-only "$DIAGNOSTIC_BASE_SHA" "$SOURCE_SHA" | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Validate diagnostic policy
+        run: |
+          set -Eeuo pipefail
+          node test/test-backend-instance-agent-diagnostic-v1.js
+
+      - name: Initialize sanitized evidence
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          jq -n --arg source_sha "$SOURCE_SHA" --arg base_sha "$DIAGNOSTIC_BASE_SHA" '{
+            source_sha:$source_sha,
+            diagnostic_base_sha:$base_sha,
+            instance_identity_matched:false,
+            agent_config_read:false,
+            plugin_status_read:false,
+            diagnostic_complete:false,
+            command_api_used:false,
+            new_command_created:false,
+            command_canceled:false,
+            production_changed:false,
+            deploy_performed:false,
+            restart_performed:false,
+            rollback_executed:false
+          }' > "$EVIDENCE_DIR/manifest.json"
+          echo '{"compute_instance_get_used":true,"instance_agent_plugin_list_used":true,"command_api_allowed":false,"raw_plugin_message_recorded":false}' > "$EVIDENCE_DIR/policy.json"
+
+      - name: Install pinned OCI CLI before secret exposure
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          test "$(oci --version)" = '3.89.2'
+          oci --version > "$EVIDENCE_DIR/oci-cli-version.txt"
+
+      - name: Configure isolated OCI profile
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID }}
+        run: |
+          set -Eeuo pipefail
+          set +x
+          missing=()
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION OCI_COMPARTMENT_OCID OCI_INSTANCE_OCID; do
+            [ -n "${!name:-}" ] || missing+=("$name")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '%s\n' "${missing[@]}" | sed 's/^/MISSING_INPUT=/' > "$EVIDENCE_DIR/blocker.txt"
+            exit 78
+          fi
+          install -d -m 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/key.raw"
+          if openssl pkey -in "$HOME/.oci/key.raw" -noout >/dev/null 2>&1; then
+            mv "$HOME/.oci/key.raw" "$HOME/.oci/key.pem"
+          else
+            base64 -d "$HOME/.oci/key.raw" > "$HOME/.oci/key.pem"
+            rm -f "$HOME/.oci/key.raw"
+            openssl pkey -in "$HOME/.oci/key.pem" -noout >/dev/null
+          fi
+          chmod 600 "$HOME/.oci/key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=${OCI_USER_OCID}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY_OCID}
+          region=${OCI_REGION}
+          key_file=${HOME}/.oci/key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          printf '%s' "$OCI_COMPARTMENT_OCID" > /tmp/oci-compartment-id
+          printf '%s' "$OCI_INSTANCE_OCID" > /tmp/oci-instance-id
+          chmod 600 /tmp/oci-compartment-id /tmp/oci-instance-id
+          echo '{"canonical_inputs_present":true,"values_recorded":false,"secrets_step_scoped":true}' > "$EVIDENCE_DIR/inputs.json"
+
+      - name: Diagnose desired and observed Run Command plugin state
+        run: |
+          set -Eeuo pipefail
+          set +x
+          compartment_id=$(cat /tmp/oci-compartment-id)
+          instance_id=$(cat /tmp/oci-instance-id)
+
+          oci compute instance get --instance-id "$instance_id" --no-retry > /tmp/instance.json
+          lifecycle=$(jq -r '.data."lifecycle-state" // empty' /tmp/instance.json)
+          returned_id=$(jq -r '.data.id // empty' /tmp/instance.json)
+          returned_compartment=$(jq -r '.data."compartment-id" // empty' /tmp/instance.json)
+          test "$lifecycle" = RUNNING
+          test "$returned_id" = "$instance_id"
+          test "$returned_compartment" = "$compartment_id"
+
+          agent_config_present=$(jq '((.data."agent-config" // .data.agentConfig // null) != null)' /tmp/instance.json)
+          all_disabled=$(jq -r '.data."agent-config"."are-all-plugins-disabled" // .data.agentConfig.areAllPluginsDisabled // false' /tmp/instance.json)
+          management_disabled=$(jq -r '.data."agent-config"."is-management-disabled" // .data.agentConfig.isManagementDisabled // false' /tmp/instance.json)
+          jq '(.data."agent-config"."plugins-config" // .data.agentConfig.pluginsConfig // [])' /tmp/instance.json > /tmp/plugins-config.json
+          desired_matches=$(jq '[.[] | select(((.name // "") | ascii_downcase | contains("run command")))]' /tmp/plugins-config.json)
+          desired_count=$(jq 'length' <<<"$desired_matches")
+          desired_state=DEFAULT
+          if [ "$desired_count" -eq 1 ]; then
+            desired_state=$(jq -r '.[0]."desired-state" // .[0].desiredState // "UNKNOWN"' <<<"$desired_matches" | tr '[:lower:]' '[:upper:]')
+          elif [ "$desired_count" -gt 1 ]; then
+            desired_state=UNKNOWN
+          fi
+          case "$desired_state" in
+            ENABLED|DISABLED|DEFAULT|UNKNOWN) ;;
+            *) desired_state=UNKNOWN ;;
+          esac
+
+          oci instance-agent plugin list \
+            --compartment-id "$compartment_id" \
+            --instanceagent-id "$instance_id" \
+            --all --no-retry > /tmp/plugins.json
+          plugin_total=$(jq '.data | length' /tmp/plugins.json)
+          jq '[.data[] | select(((.name // "") | ascii_downcase | contains("run command")))]' /tmp/plugins.json > /tmp/run-command-plugins.json
+          observed_count=$(jq 'length' /tmp/run-command-plugins.json)
+          observed_status=UNKNOWN
+          message_present=false
+          message_length_bucket=ZERO
+          last_updated_present=false
+          last_updated_age_bucket=UNKNOWN
+          if [ "$observed_count" -eq 1 ]; then
+            observed_status=$(jq -r '.[0].status // "UNKNOWN"' /tmp/run-command-plugins.json | tr '[:lower:]' '[:upper:]')
+            message_length=$(jq -r '.[0].message // "" | length' /tmp/run-command-plugins.json)
+            [ "$message_length" -gt 0 ] && message_present=true
+            if [ "$message_length" -eq 0 ]; then
+              message_length_bucket=ZERO
+            elif [ "$message_length" -le 64 ]; then
+              message_length_bucket=LE_64
+            elif [ "$message_length" -le 256 ]; then
+              message_length_bucket=LE_256
+            else
+              message_length_bucket=GT_256
+            fi
+            updated=$(jq -r '.[0]."time-last-updated-utc" // .[0].timeLastUpdatedUtc // empty' /tmp/run-command-plugins.json)
+            if [ -n "$updated" ]; then
+              last_updated_present=true
+              updated_epoch=$(date -u -d "$updated" +%s 2>/dev/null || true)
+              now_epoch=$(date -u +%s)
+              if [[ "$updated_epoch" =~ ^[0-9]+$ ]] && [ "$updated_epoch" -le "$now_epoch" ]; then
+                age=$((now_epoch-updated_epoch))
+                if [ "$age" -lt 900 ]; then last_updated_age_bucket=LT_15M
+                elif [ "$age" -lt 3600 ]; then last_updated_age_bucket=LT_1H
+                elif [ "$age" -lt 21600 ]; then last_updated_age_bucket=LT_6H
+                elif [ "$age" -lt 86400 ]; then last_updated_age_bucket=LT_24H
+                else last_updated_age_bucket=GE_24H
+                fi
+              fi
+            fi
+          fi
+          case "$observed_status" in
+            RUNNING|STOPPED|NOT_SUPPORTED|INVALID|UNKNOWN) ;;
+            *) observed_status=UNKNOWN ;;
+          esac
+
+          classification=BLOCKED_AGENT_CONFIG_UNKNOWN
+          if [ "$agent_config_present" != true ]; then
+            classification=BLOCKED_AGENT_CONFIG_UNKNOWN
+          elif [ "$all_disabled" = true ]; then
+            classification=BLOCKED_ALL_PLUGINS_DISABLED
+          elif [ "$management_disabled" = true ]; then
+            classification=BLOCKED_MANAGEMENT_DISABLED
+          elif [ "$desired_count" -gt 1 ]; then
+            classification=BLOCKED_AGENT_CONFIG_UNKNOWN
+          elif [ "$desired_state" = DISABLED ]; then
+            classification=BLOCKED_PLUGIN_DESIRED_DISABLED
+          elif [ "$observed_count" -eq 0 ]; then
+            classification=BLOCKED_PLUGIN_MISSING
+          elif [ "$observed_count" -gt 1 ]; then
+            classification=BLOCKED_PLUGIN_AMBIGUOUS
+          else
+            case "$observed_status" in
+              RUNNING) classification=PLUGIN_RUNNING ;;
+              STOPPED) classification=BLOCKED_PLUGIN_STOPPED ;;
+              NOT_SUPPORTED) classification=BLOCKED_PLUGIN_NOT_SUPPORTED ;;
+              INVALID) classification=BLOCKED_PLUGIN_INVALID ;;
+              *) classification=BLOCKED_AGENT_CONFIG_UNKNOWN ;;
+            esac
+          fi
+
+          jq -n \
+            --arg lifecycle_state "$lifecycle" \
+            --argjson agent_config_present "$agent_config_present" \
+            --argjson all_plugins_disabled "$all_disabled" \
+            --argjson management_disabled "$management_disabled" \
+            --argjson desired_match_count "$desired_count" \
+            --arg desired_state "$desired_state" \
+            --argjson plugin_total "$plugin_total" \
+            --argjson observed_match_count "$observed_count" \
+            --arg observed_status "$observed_status" \
+            --argjson message_present "$message_present" \
+            --arg message_length_bucket "$message_length_bucket" \
+            --argjson last_updated_present "$last_updated_present" \
+            --arg last_updated_age_bucket "$last_updated_age_bucket" \
+            --arg classification "$classification" \
+            '{
+              instance_lifecycle_state:$lifecycle_state,
+              instance_identity_matched:true,
+              compartment_identity_matched:true,
+              agent_config_present:$agent_config_present,
+              are_all_plugins_disabled:$all_plugins_disabled,
+              is_management_disabled:$management_disabled,
+              run_command_desired_match_count:$desired_match_count,
+              run_command_desired_state:$desired_state,
+              observed_plugin_total:$plugin_total,
+              run_command_observed_match_count:$observed_match_count,
+              run_command_observed_status:$observed_status,
+              plugin_message_present:$message_present,
+              plugin_message_length_bucket:$message_length_bucket,
+              plugin_last_updated_present:$last_updated_present,
+              plugin_last_updated_age_bucket:$last_updated_age_bucket,
+              classification:$classification,
+              identifiers_recorded:false,
+              raw_plugin_message_recorded:false,
+              raw_plugin_list_recorded:false
+            }' > "$EVIDENCE_DIR/diagnostic.json"
+          jq '.instance_identity_matched=true | .agent_config_read=true | .plugin_status_read=true | .diagnostic_complete=true' \
+            "$EVIDENCE_DIR/manifest.json" > /tmp/manifest.json
+          mv /tmp/manifest.json "$EVIDENCE_DIR/manifest.json"
+          printf 'INSTANCE_AGENT_DIAGNOSTIC=COMPLETE\nRUN_COMMAND_PLUGIN_CLASSIFICATION=%s\nBACKEND_INSPECTED=false\nPRODUCTION_CHANGED=false\n' \
+            "$classification" > "$EVIDENCE_DIR/result.txt"
+
+      - name: Remove temporary credentials and raw responses
+        if: always()
+        run: |
+          set +e
+          rm -rf "$HOME/.oci"
+          rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
+          rm -f /tmp/instance.json /tmp/plugins-config.json /tmp/plugins.json /tmp/run-command-plugins.json /tmp/manifest.json
+
+      - name: Verify sanitized evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd "$EVIDENCE_DIR"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-instance-agent-diagnostic-v1-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.EVIDENCE_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
