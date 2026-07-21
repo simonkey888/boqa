@@ -338,7 +338,8 @@ jobs:
             (.log_lines | type == "number" and . >= 0 and . <= 200) and
             (.log_critical | type == "number" and . >= 0) and
             (.log_secret_terms | type == "number" and . >= 0)
-          ' /tmp/recovered-output.txt > "$EVIDENCE_DIR/inspection.json"
+          ' /tmp/recovered-output.txt >/dev/null
+          cp /tmp/recovered-output.txt "$EVIDENCE_DIR/inspection.json"
           classification=$(jq -r '.class' "$EVIDENCE_DIR/inspection.json")
           jq --arg classification "$classification" \
             '.classification=$classification' "$EVIDENCE_DIR/execution.json" > /tmp/execution-evidence.json
