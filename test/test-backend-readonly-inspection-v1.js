@@ -42,6 +42,13 @@ assert.match(workflow, /SCRIPT_POLICY=FORBIDDEN_DOCKER_MUTATION/);
 assert.doesNotMatch(workflow, /BACKEND_READONLY_INSPECTION=PASS/);
 assert.doesNotMatch(workflow, /OBJECT_STORAGE/i);
 
+const cleanupIndex = workflow.indexOf('- name: Remove temporary credentials and identifiers before artifact handling');
+const checksumIndex = workflow.indexOf('- name: Verify sanitized evidence checksums');
+const uploadIndex = workflow.indexOf('- name: Upload sanitized inspection evidence');
+assert.ok(cleanupIndex > 0, 'credential cleanup step missing');
+assert.ok(checksumIndex > cleanupIndex, 'checksums must run after credential cleanup');
+assert.ok(uploadIndex > cleanupIndex, 'artifact upload must run after credential cleanup');
+
 const beforeSteps = workflow.slice(0, workflow.indexOf('\n    steps:'));
 assert.doesNotMatch(beforeSteps, /secrets\./, 'OCI secrets must not be job-wide');
 const configureStep = workflow.match(/- name: Configure isolated OCI profile and exact target[\s\S]*?\n      - name:/)?.[0] || '';
