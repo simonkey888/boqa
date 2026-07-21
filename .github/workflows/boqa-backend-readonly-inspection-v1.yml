@@ -365,6 +365,16 @@ jobs:
           mv /tmp/manifest.json "$EVIDENCE_DIR/manifest.json"
           rm -f /tmp/execution.json /tmp/inspection-output.b64 /tmp/inspection-output.txt
 
+      - name: Remove temporary credentials and identifiers before artifact handling
+        if: always()
+        run: |
+          set +e
+          rm -rf "$HOME/.oci"
+          rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
+          rm -f /tmp/instance.json /tmp/prior-executions.json /tmp/prior-commands.json
+          rm -f /tmp/content.json /tmp/target.json /tmp/create.err /tmp/command-id /tmp/manifest.json
+          rm -f /tmp/execution.json /tmp/inspection-output.b64 /tmp/inspection-output.txt
+
       - name: Enforce inspection completeness without declaring deployability
         run: |
           set -Eeuo pipefail
@@ -402,13 +412,3 @@ jobs:
           path: ${{ env.EVIDENCE_DIR }}/
           if-no-files-found: error
           retention-days: 14
-
-      - name: Remove temporary credentials and identifiers
-        if: always()
-        run: |
-          set +e
-          rm -rf "$HOME/.oci"
-          rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
-          rm -f /tmp/instance.json /tmp/prior-executions.json /tmp/prior-commands.json
-          rm -f /tmp/content.json /tmp/target.json /tmp/create.err /tmp/command-id /tmp/manifest.json
-          rm -f /tmp/execution.json /tmp/inspection-output.b64 /tmp/inspection-output.txt
