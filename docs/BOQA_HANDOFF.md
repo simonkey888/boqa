@@ -127,7 +127,7 @@ Revalidar antes de cualquier promoción.
 
 - HANDOFF_BRANCH=`docs/boqa-handoff-pr25-reconstructed`
 - VERSIONED_HANDOFF_RECONCILED=`true`
-- CANONICAL_DRIVE_SYNC=`PENDING_PR33_UPDATE`
+- CANONICAL_DRIVE_SYNC=`COMPLETE`
 - DOCUMENTED_PR33_HEAD=`3db1220f65ff089444ae781833356295f72bba9f`
 
 ## Siguiente acción exacta
