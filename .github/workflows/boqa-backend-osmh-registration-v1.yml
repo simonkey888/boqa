@@ -1,0 +1,304 @@
+name: BOQA Backend OSMH Registration V1
+
+on:
+  pull_request:
+    branches:
+      - deploy/boqa-backend-agent-compatibility-diagnostic-v1
+    types:
+      - labeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-osmh-registration-v1-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  inspect-osmh-registration-read-only:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'authorized-backend-osmh-registration' &&
+      github.event.pull_request.number == 0 &&
+      github.event.pull_request.draft == true &&
+      github.event.pull_request.base.sha == '7cffe43e457b91ade200268cf43c782d127ecb1b' &&
+      github.event.pull_request.head.ref == 'deploy/boqa-backend-osmh-agent-inventory-v1' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner &&
+      contains(github.event.pull_request.body, 'BOQA_AUTONOMOUS_READONLY=AUTHORIZED') &&
+      github.run_attempt == 1 &&
+      github.run_number == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      DIAGNOSTIC_BASE_SHA: 7cffe43e457b91ade200268cf43c782d127ecb1b
+      REQUIRED_BRANCH: deploy/boqa-backend-osmh-agent-inventory-v1
+      EXPECTED_PR_NUMBER: '0'
+      AUTH_LABEL: ${{ github.event.label.name }}
+      EVIDENCE_DIR: output/backend-osmh-registration-v1
+
+    steps:
+      - name: Checkout exact diagnostic head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce exact authorization and two-file diff
+        env:
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -Eeuo pipefail
+          test "$EVENT_PR_NUMBER" = "$EXPECTED_PR_NUMBER"
+          test "$EVENT_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$GITHUB_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$EVENT_BASE_SHA" = "$DIAGNOSTIC_BASE_SHA"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$AUTH_LABEL" = authorized-backend-osmh-registration
+          test "$EVENT_ACTOR" = "$REPOSITORY_OWNER"
+          test "$RUN_ATTEMPT" = 1
+          test "$RUN_NUMBER" = 1
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          git merge-base --is-ancestor "$DIAGNOSTIC_BASE_SHA" "$SOURCE_SHA"
+          cat > /tmp/expected-files <<'EOF'
+          .github/workflows/boqa-backend-osmh-registration-v1.yml
+          test/test-backend-osmh-registration-v1.js
+          EOF
+          git diff --name-only "$DIAGNOSTIC_BASE_SHA" "$SOURCE_SHA" | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+
+      - name: Validate OSMH registration policy
+        run: |
+          set -Eeuo pipefail
+          node test/test-backend-osmh-registration-v1.js
+
+      - name: Initialize sanitized evidence
+        run: |
+          set -Eeuo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          jq -n --arg source_sha "$SOURCE_SHA" --arg base_sha "$DIAGNOSTIC_BASE_SHA" '{
+            source_sha:$source_sha,
+            diagnostic_base_sha:$base_sha,
+            compute_identity_matched:false,
+            osmh_list_attempted:false,
+            osmh_list_read:false,
+            osmh_instance_resolved:false,
+            diagnostic_complete:false,
+            write_operation_attempted:false,
+            command_api_used:false,
+            production_changed:false
+          }' > "$EVIDENCE_DIR/manifest.json"
+          echo '{"compute_instance_get_used":true,"osmh_managed_instance_list_used":true,"write_operations_allowed":false}' > "$EVIDENCE_DIR/policy.json"
+
+      - name: Install pinned OCI CLI before secret exposure
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          test "$(oci --version)" = '3.89.2'
+          oci --version > "$EVIDENCE_DIR/oci-cli-version.txt"
+
+      - name: Configure isolated OCI profile
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID }}
+        run: |
+          set -Eeuo pipefail
+          set +x
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION OCI_COMPARTMENT_OCID OCI_INSTANCE_OCID; do
+            test -n "${!name:-}"
+          done
+          install -d -m 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/key.raw"
+          if openssl pkey -in "$HOME/.oci/key.raw" -noout >/dev/null 2>&1; then
+            mv "$HOME/.oci/key.raw" "$HOME/.oci/key.pem"
+          else
+            base64 -d "$HOME/.oci/key.raw" > "$HOME/.oci/key.pem"
+            rm -f "$HOME/.oci/key.raw"
+            openssl pkey -in "$HOME/.oci/key.pem" -noout >/dev/null
+          fi
+          chmod 600 "$HOME/.oci/key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=${OCI_USER_OCID}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY_OCID}
+          region=${OCI_REGION}
+          key_file=${HOME}/.oci/key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          printf '%s' "$OCI_COMPARTMENT_OCID" > /tmp/oci-compartment-id
+          printf '%s' "$OCI_INSTANCE_OCID" > /tmp/oci-instance-id
+          chmod 600 /tmp/oci-compartment-id /tmp/oci-instance-id
+
+      - name: Diagnose OSMH registration
+        run: |
+          set -Eeuo pipefail
+          set +x
+          compartment_id=$(cat /tmp/oci-compartment-id)
+          instance_id=$(cat /tmp/oci-instance-id)
+          oci compute instance get --instance-id "$instance_id" --no-retry > /tmp/compute.json
+          test "$(jq -r '.data.id // empty' /tmp/compute.json)" = "$instance_id"
+          test "$(jq -r '.data."compartment-id" // empty' /tmp/compute.json)" = "$compartment_id"
+          test "$(jq -r '.data."lifecycle-state" // empty' /tmp/compute.json)" = RUNNING
+          compute_name=$(jq -r '.data."display-name" // empty' /tmp/compute.json)
+          test -n "$compute_name"
+          compute_id_sha=$(printf '%s' "$instance_id" | sha256sum | awk '{print $1}')
+          compute_name_sha=$(printf '%s' "$compute_name" | sha256sum | awk '{print $1}')
+
+          set +e
+          oci os-management-hub managed-instance list \
+            --compartment-id "$compartment_id" --location OCI_COMPUTE \
+            --all --no-retry > /tmp/osmh.json 2>/tmp/osmh.err
+          list_exit=$?
+          set -e
+          error_code=NONE
+          http_status=000
+          list_read=false
+          if [ "$list_exit" -eq 0 ]; then
+            list_read=true
+          else
+            error_code=$(sed -nE 's/^[[:space:]]*"code"[[:space:]]*:[[:space:]]*"([A-Za-z0-9_.:-]+)".*/\1/p' /tmp/osmh.err | head -n1)
+            http_status=$(sed -nE 's/^[[:space:]]*"status"[[:space:]]*:[[:space:]]*([0-9]{3}).*/\1/p' /tmp/osmh.err | head -n1)
+            [ -n "$error_code" ] || error_code=UNAVAILABLE
+            [ -n "$http_status" ] || http_status=000
+            error_code=$(printf '%s' "$error_code" | tr -cd 'A-Za-z0-9_.:-' | cut -c1-64)
+            http_status=$(printf '%s' "$http_status" | tr -cd '0-9' | cut -c1-3)
+            echo '{"data":[]}' > /tmp/osmh.json
+          fi
+
+          total=$(jq '.data | length' /tmp/osmh.json)
+          id_count=$(jq --arg id "$instance_id" '[.data[] | select(.id == $id)] | length' /tmp/osmh.json)
+          name_count=$(jq --arg name "$compute_name" '[.data[] | select((."display-name" // .displayName // "") == $name)] | length' /tmp/osmh.json)
+          resolution_mode=NONE
+          managed_id=''
+          classification=OSMH_NOT_REGISTERED
+          if [ "$list_exit" -ne 0 ]; then
+            classification=OSMH_ACCESS_BLOCKED
+          elif [ "$id_count" -eq 1 ]; then
+            resolution_mode=COMPUTE_ID
+            managed_id=$(jq -r --arg id "$instance_id" '.data[] | select(.id == $id) | (.id // empty)' /tmp/osmh.json)
+          elif [ "$id_count" -gt 1 ]; then
+            classification=OSMH_INSTANCE_AMBIGUOUS
+          elif [ "$name_count" -eq 1 ]; then
+            resolution_mode=DISPLAY_NAME
+            managed_id=$(jq -r --arg name "$compute_name" '.data[] | select((."display-name" // .displayName // "") == $name) | (.id // empty)' /tmp/osmh.json)
+          elif [ "$name_count" -gt 1 ]; then
+            classification=OSMH_INSTANCE_AMBIGUOUS
+          fi
+          [ "$managed_id" != null ] || managed_id=''
+
+          resolved=false
+          managed_id_sha=''
+          managed_status=UNAVAILABLE
+          osmh_agent_version=UNAVAILABLE
+          checkin_present=false
+          checkin_age_bucket=UNKNOWN
+          if [ -n "$managed_id" ]; then
+            resolved=true
+            classification=OSMH_REGISTERED
+            managed_id_sha=$(printf '%s' "$managed_id" | sha256sum | awk '{print $1}')
+            jq --arg id "$managed_id" '.data[] | select(.id == $id)' /tmp/osmh.json > /tmp/managed.json
+            managed_status=$(jq -r '.status // "UNAVAILABLE"' /tmp/managed.json | tr -cd 'A-Za-z0-9_.:-' | cut -c1-48)
+            osmh_agent_version=$(jq -r '."agent-version" // .agentVersion // "UNAVAILABLE"' /tmp/managed.json | tr -cd 'A-Za-z0-9.+~:_- ' | cut -c1-64)
+            checkin=$(jq -r '."time-last-checkin" // .timeLastCheckin // empty' /tmp/managed.json)
+            if [ -n "$checkin" ]; then
+              checkin_present=true
+              checkin_epoch=$(date -u -d "$checkin" +%s 2>/dev/null || true)
+              now_epoch=$(date -u +%s)
+              if [[ "$checkin_epoch" =~ ^[0-9]+$ ]] && [ "$checkin_epoch" -le "$now_epoch" ]; then
+                age=$((now_epoch-checkin_epoch))
+                if [ "$age" -lt 900 ]; then checkin_age_bucket=LT_15M
+                elif [ "$age" -lt 3600 ]; then checkin_age_bucket=LT_1H
+                elif [ "$age" -lt 21600 ]; then checkin_age_bucket=LT_6H
+                elif [ "$age" -lt 86400 ]; then checkin_age_bucket=LT_24H
+                else checkin_age_bucket=GE_24H
+                fi
+              fi
+            fi
+          fi
+
+          jq -n \
+            --arg compute_id_sha256 "$compute_id_sha" \
+            --arg compute_name_sha256 "$compute_name_sha" \
+            --argjson list_exit "$list_exit" \
+            --arg error_code "$error_code" \
+            --arg http_status "$http_status" \
+            --argjson managed_instance_total "$total" \
+            --argjson exact_compute_id_match_count "$id_count" \
+            --argjson exact_display_name_match_count "$name_count" \
+            --arg resolution_mode "$resolution_mode" \
+            --arg managed_instance_id_sha256 "$managed_id_sha" \
+            --arg managed_instance_status "$managed_status" \
+            --arg osmh_agent_version "$osmh_agent_version" \
+            --argjson last_checkin_present "$checkin_present" \
+            --arg last_checkin_age_bucket "$checkin_age_bucket" \
+            --arg classification "$classification" \
+            '{
+              compute_identity_matched:true,
+              compute_id_sha256:$compute_id_sha256,
+              compute_name_sha256:$compute_name_sha256,
+              osmh_list_exit:$list_exit,
+              osmh_error_code:$error_code,
+              osmh_http_status:$http_status,
+              managed_instance_total:$managed_instance_total,
+              exact_compute_id_match_count:$exact_compute_id_match_count,
+              exact_display_name_match_count:$exact_display_name_match_count,
+              resolution_mode:$resolution_mode,
+              managed_instance_id_sha256:$managed_instance_id_sha256,
+              managed_instance_status:$managed_instance_status,
+              osmh_agent_version:$osmh_agent_version,
+              last_checkin_present:$last_checkin_present,
+              last_checkin_age_bucket:$last_checkin_age_bucket,
+              classification:$classification,
+              identifiers_recorded:false,
+              raw_managed_instances_recorded:false,
+              raw_error_recorded:false
+            }' > "$EVIDENCE_DIR/diagnostic.json"
+          jq --argjson list_read "$list_read" --argjson resolved "$resolved" '
+            .compute_identity_matched=true |
+            .osmh_list_attempted=true |
+            .osmh_list_read=$list_read |
+            .osmh_instance_resolved=$resolved |
+            .diagnostic_complete=true' "$EVIDENCE_DIR/manifest.json" > /tmp/manifest.json
+          mv /tmp/manifest.json "$EVIDENCE_DIR/manifest.json"
+          printf 'OSMH_REGISTRATION_DIAGNOSTIC=COMPLETE\nCLASSIFICATION=%s\nBACKEND_INSPECTED=false\nPRODUCTION_CHANGED=false\n' "$classification" > "$EVIDENCE_DIR/result.txt"
+
+      - name: Remove temporary credentials and raw responses
+        if: always()
+        run: |
+          set +e
+          rm -rf "$HOME/.oci"
+          rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
+          rm -f /tmp/compute.json /tmp/osmh.json /tmp/osmh.err /tmp/managed.json /tmp/manifest.json
+
+      - name: Verify sanitized evidence checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd "$EVIDENCE_DIR"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-osmh-registration-v1-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.EVIDENCE_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
