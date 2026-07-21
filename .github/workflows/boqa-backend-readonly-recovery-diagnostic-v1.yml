@@ -1,0 +1,214 @@
+name: BOQA Backend Recovery Diagnostic V1
+
+on:
+  pull_request:
+    branches:
+      - deploy/boqa-backend-readonly-inspection-v1
+    types:
+      - labeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-backend-recovery-diagnostic-v1-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose-existing-command-shape:
+    if: >-
+      github.event.action == 'labeled' &&
+      github.event.label.name == 'authorized-backend-recovery-diagnostic' &&
+      github.event.pull_request.number == 29 &&
+      github.event.pull_request.draft == true &&
+      github.event.pull_request.base.sha == 'fb1cc8bcfbf0f3d76d5f8860619e953266a388b6' &&
+      github.event.pull_request.head.ref == 'deploy/boqa-backend-readonly-recovery-v1' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor == github.repository_owner &&
+      contains(github.event.pull_request.body, 'BOQA_AUTONOMOUS_READONLY=AUTHORIZED') &&
+      github.run_attempt == 1 &&
+      github.run_number == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+      RECOVERY_BASE_SHA: fb1cc8bcfbf0f3d76d5f8860619e953266a388b6
+      REQUIRED_BRANCH: deploy/boqa-backend-readonly-recovery-v1
+      EXPECTED_COMMAND_NAME: boqa-readonly-inspection-v1-fb1cc8bcfbf0f3d76d5f8860619e953266a388b6
+      EXPECTED_SCRIPT_SHA256: bf01b6b9988ac7d902ddd4cfd59a1ccb1b3bcef2168880a9b106e56b3e47fc41
+      EVIDENCE_DIR: output/backend-readonly-recovery-diagnostic-v1
+
+    steps:
+      - name: Checkout exact diagnostic head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Enforce exact diagnostic scope
+        env:
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          EVENT_ACTOR: ${{ github.actor }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          AUTH_LABEL: ${{ github.event.label.name }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -Eeuo pipefail
+          test "$EVENT_PR_NUMBER" = 29
+          test "$EVENT_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$GITHUB_HEAD_REF" = "$REQUIRED_BRANCH"
+          test "$EVENT_BASE_SHA" = "$RECOVERY_BASE_SHA"
+          test "$HEAD_REPOSITORY" = "$GITHUB_REPOSITORY"
+          test "$AUTH_LABEL" = authorized-backend-recovery-diagnostic
+          test "$EVENT_ACTOR" = "$REPOSITORY_OWNER"
+          test "$RUN_ATTEMPT" = 1
+          test "$RUN_NUMBER" = 1
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+          git merge-base --is-ancestor "$RECOVERY_BASE_SHA" "$SOURCE_SHA"
+          cat > /tmp/expected-files <<'EOF'
+          .github/workflows/boqa-backend-readonly-recovery-autonomous-v1.yml
+          .github/workflows/boqa-backend-readonly-recovery-diagnostic-v1.yml
+          .github/workflows/boqa-backend-readonly-recovery-v1.yml
+          test/test-backend-readonly-recovery-v1.js
+          EOF
+          git diff --name-only "$RECOVERY_BASE_SHA" "$SOURCE_SHA" | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          mkdir -p "$EVIDENCE_DIR"
+          echo '{"diagnostic_read_only":true,"new_command_created":false,"command_canceled":false,"production_changed":false}' > "$EVIDENCE_DIR/manifest.json"
+
+      - name: Install pinned OCI CLI
+        run: |
+          set -Eeuo pipefail
+          python -m pip install --disable-pip-version-check --no-cache-dir 'oci-cli==3.89.2'
+          test "$(oci --version)" = '3.89.2'
+          oci --version > "$EVIDENCE_DIR/oci-cli-version.txt"
+
+      - name: Configure isolated OCI profile
+        env:
+          OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
+          OCI_INSTANCE_OCID: ${{ secrets.OCI_INSTANCE_OCID }}
+        run: |
+          set -Eeuo pipefail
+          set +x
+          for name in OCI_TENANCY_OCID OCI_USER_OCID OCI_FINGERPRINT OCI_PRIVATE_KEY OCI_REGION OCI_COMPARTMENT_OCID OCI_INSTANCE_OCID; do
+            test -n "${!name:-}"
+          done
+          install -d -m 700 "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/key.raw"
+          if openssl pkey -in "$HOME/.oci/key.raw" -noout >/dev/null 2>&1; then
+            mv "$HOME/.oci/key.raw" "$HOME/.oci/key.pem"
+          else
+            base64 -d "$HOME/.oci/key.raw" > "$HOME/.oci/key.pem"
+            rm -f "$HOME/.oci/key.raw"
+            openssl pkey -in "$HOME/.oci/key.pem" -noout >/dev/null
+          fi
+          chmod 600 "$HOME/.oci/key.pem"
+          cat > "$HOME/.oci/config" <<EOF
+          [DEFAULT]
+          user=${OCI_USER_OCID}
+          fingerprint=${OCI_FINGERPRINT}
+          tenancy=${OCI_TENANCY_OCID}
+          region=${OCI_REGION}
+          key_file=${HOME}/.oci/key.pem
+          EOF
+          chmod 600 "$HOME/.oci/config"
+          printf '%s' "$OCI_COMPARTMENT_OCID" > /tmp/oci-compartment-id
+          printf '%s' "$OCI_INSTANCE_OCID" > /tmp/oci-instance-id
+          chmod 600 /tmp/oci-compartment-id /tmp/oci-instance-id
+
+      - name: Collect sanitized command shape
+        run: |
+          set -Eeuo pipefail
+          set +x
+          compartment_id=$(cat /tmp/oci-compartment-id)
+          instance_id=$(cat /tmp/oci-instance-id)
+          oci compute instance get --instance-id "$instance_id" --no-retry > /tmp/instance.json
+          oci instance-agent command list --compartment-id "$compartment_id" --all --no-retry > /tmp/commands.json
+          match_count=$(jq --arg name "$EXPECTED_COMMAND_NAME" '[.data[] | select(."display-name" == $name)] | length' /tmp/commands.json)
+          command_id=$(jq -r --arg name "$EXPECTED_COMMAND_NAME" '.data[] | select(."display-name" == $name) | .id' /tmp/commands.json | head -n1)
+          command_read=false
+          if [ "$match_count" -eq 1 ] && [ -n "$command_id" ]; then
+            oci instance-agent command get --command-id "$command_id" --no-retry > /tmp/command.json
+            command_read=true
+          else
+            echo '{"data":{}}' > /tmp/command.json
+          fi
+          jq -n \
+            --argjson match_count "$match_count" \
+            --argjson command_read "$command_read" \
+            --arg expected_name "$EXPECTED_COMMAND_NAME" \
+            --arg expected_compartment "$compartment_id" \
+            --arg expected_instance "$instance_id" \
+            --arg expected_sha "$EXPECTED_SCRIPT_SHA256" \
+            --slurpfile instance /tmp/instance.json \
+            --slurpfile command /tmp/command.json \
+            '($command[0].data // {}) as $c |
+             ($instance[0].data // {}) as $i |
+             ($c.content.source.text // "") as $text |
+             {
+               exact_match_count:$match_count,
+               command_read:$command_read,
+               instance_running:($i["lifecycle-state"] == "RUNNING"),
+               command_id_present:(($c.id // "") | length > 0),
+               display_name_match:(($c["display-name"] // "") == $expected_name),
+               compartment_match:(($c["compartment-id"] // "") == $expected_compartment),
+               target_kebab_present:(($c.target["instance-id"] // "") | length > 0),
+               target_camel_present:(($c.target.instanceId // "") | length > 0),
+               target_match:((($c.target["instance-id"] // $c.target.instanceId // "")) == $expected_instance),
+               timeout_kebab_present:($c["timeout-in-seconds"] != null),
+               timeout_camel_present:($c.timeoutInSeconds != null),
+               timeout_match:((($c["timeout-in-seconds"] // $c.timeoutInSeconds // -1)) == 120),
+               source_type_kebab:($c.content.source["source-type"] == "TEXT"),
+               source_type_camel:($c.content.source.sourceType == "TEXT"),
+               source_text_present:($text | length > 0),
+               source_service_sha_kebab_present:(($c.content.source["text-sha256"] // "") | length > 0),
+               source_service_sha_camel_present:(($c.content.source.textSha256 // "") | length > 0),
+               source_service_sha_match:((($c.content.source["text-sha256"] // $c.content.source.textSha256 // "")) == $expected_sha),
+               source_local_sha_match:(if ($text|length)>0 then (($text|@base64d?) == null) else false end),
+               output_type_kebab:($c.content.output["output-type"] == "TEXT"),
+               output_type_camel:($c.content.output.outputType == "TEXT"),
+               top_keys_sha:(($c|keys|sort|join("\n"))|@base64),
+               content_keys_sha:((($c.content // {})|keys|sort|join("\n"))|@base64),
+               source_keys_sha:((($c.content.source // {})|keys|sort|join("\n"))|@base64),
+               target_keys_sha:((($c.target // {})|keys|sort|join("\n"))|@base64),
+               identifiers_recorded:false,
+               raw_payload_recorded:false
+             }' > /tmp/shape-pre.json
+          jq '.top_keys_sha=(.top_keys_sha|@sh) | .content_keys_sha=(.content_keys_sha|@sh) | .source_keys_sha=(.source_keys_sha|@sh) | .target_keys_sha=(.target_keys_sha|@sh)' /tmp/shape-pre.json > "$EVIDENCE_DIR/command-shape.json"
+          rm -f /tmp/shape-pre.json
+
+      - name: Remove temporary credentials and raw responses
+        if: always()
+        run: |
+          set +e
+          rm -rf "$HOME/.oci"
+          rm -f /tmp/expected-files /tmp/actual-files /tmp/oci-compartment-id /tmp/oci-instance-id
+          rm -f /tmp/instance.json /tmp/commands.json /tmp/command.json /tmp/shape-pre.json
+
+      - name: Verify diagnostic checksums
+        if: always()
+        run: |
+          set -Eeuo pipefail
+          cd "$EVIDENCE_DIR"
+          find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload sanitized diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-backend-recovery-diagnostic-v1-${{ github.event.pull_request.head.sha }}
+          path: ${{ env.EVIDENCE_DIR }}/
+          if-no-files-found: error
+          retention-days: 14
