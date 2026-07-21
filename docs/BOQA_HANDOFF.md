@@ -72,11 +72,56 @@ La ejecución autorizada no devolvió estado terminal dentro de la ventana obser
 
 No hubo reintento. La autorización de una sola ejecución fue retirada al terminar el run.
 
-## Recuperación requerida
+## PR #29 — collector read-only de recuperación
 
-La siguiente pieza debe recuperar únicamente el estado y la salida sanitizada de la operación ya existente. Debe fallar cerrado ante identidad ambigua y no debe iniciar una segunda operación remota.
+- STATUS=`OPEN_DRAFT`
+- BASE_BRANCH=`deploy/boqa-backend-readonly-inspection-v1`
+- BASE_SHA=`fb1cc8bcfbf0f3d76d5f8860619e953266a388b6`
+- HEAD_BRANCH=`deploy/boqa-backend-readonly-recovery-v1`
+- FINAL_AUDITED_HEAD=`9478ecec700371b5501a1bc385b5cacd823b5831`
+- CHANGED_FILES=`2`
+- COMMITS=`7`
+- BEHIND_BASE=`0`
+- MERGEABLE=`true`
+- WORKFLOW_RUNS=`0`
+- RECOVERY_EXECUTED=`false`
+- NEW_REMOTE_OPERATION_CREATED=`false`
+- EXISTING_OPERATION_CANCELED=`false`
 
-La recuperación todavía no fue construida, auditada ni autorizada.
+Archivos:
+
+- `.github/workflows/boqa-backend-readonly-recovery-v1.yml`
+- `test/test-backend-readonly-recovery-v1.js`
+
+El collector sólo lee la instancia exacta, localiza una única operación existente, autentica su identidad y payload y consulta su ejecución. No contiene creación, cancelación ni eliminación de operaciones remotas.
+
+Controles:
+
+- PR Draft, número, base, rama, repositorio, actor y SHA exactos.
+- Variable de autorización separada y etiqueta separada, todavía no configuradas.
+- Permisos GitHub limitados a `contents: read`.
+- OCI CLI fijada en `3.89.2`.
+- Todas las lecturas OCI usan `--no-retry`.
+- Payload original autenticado por SHA-256 `bf01b6b9988ac7d902ddd4cfd59a1ccb1b3bcef2168880a9b106e56b3e47fc41`.
+- Salida terminal limitada a 1024 bytes y checksum obligatorio.
+- Identificadores retenidos sólo mediante SHA-256.
+- Credenciales, payload e identificadores temporales eliminados antes del artifact.
+
+Validación:
+
+- Static trigger and permission policy: PASS.
+- Superficie OCI limitada a tres lecturas: PASS.
+- YAML parse: PASS.
+- Fixture sintético de resolución de operación existente: PASS.
+- Fixture sintético de identidad del payload: PASS.
+- Fixture sintético de estado terminal, checksum y esquema: PASS.
+- Objeto de inspección recuperado preservado: PASS.
+- Diff remoto: exactamente 2 archivos.
+- Runs sobre HEAD final: 0.
+
+La prueba sintética detectó y corrigió antes de ejecución un defecto que sustituía el objeto recuperado por el booleano de validación JSON.
+
+PR #29 permanece inerte. No existe autorización para ejecutarlo.
 
 ## Producción preservada
 
@@ -95,22 +140,23 @@ Revalidar antes de cualquier promoción.
 - Preview no promocionable.
 - SHA productivo indeterminado.
 - Persistencia y rollback no inspeccionados.
-- PR #25 y PR #28 permanecen Draft.
+- PR #25, PR #28 y PR #29 permanecen Draft.
 
 ## Decisión operativa
 
 - No reejecutar PR #28.
 - No iniciar una segunda operación remota.
+- No ejecutar PR #29 sin autorización explícita contra su HEAD final.
 - No mergear, desplegar ni promover.
-- Preparar un collector de recuperación separado y mantenerlo inerte hasta una autorización posterior.
 
 ## Estado documental
 
 - HANDOFF_BRANCH=`docs/boqa-handoff-pr25-reconstructed`
 - VERSIONED_HANDOFF_RECONCILED=`true`
-- CANONICAL_DRIVE_SYNC=`PENDING_INCIDENT_UPDATE`
+- CANONICAL_DRIVE_SYNC=`COMPLETE`
 - DOCUMENTED_PR28_HEAD=`fb1cc8bcfbf0f3d76d5f8860619e953266a388b6`
+- DOCUMENTED_PR29_HEAD=`9478ecec700371b5501a1bc385b5cacd823b5831`
 
 ## Siguiente acción exacta
 
-Construir y auditar un Draft PR de recuperación apilado sobre PR #28, sin ejecutarlo.
+Auditar independientemente PR #29 sobre `9478ecec700371b5501a1bc385b5cacd823b5831`. Si no aparecen hallazgos materiales, solicitar autorización explícita separada antes de configurar su variable y aplicar una única etiqueta de recuperación.
