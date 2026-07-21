@@ -14,128 +14,92 @@ TIMEZONE=America/Argentina/Cordoba
 - RESTART_PERFORMED=`false`
 - ROLLBACK_EXECUTED=`false`
 
-## PR #25 — preflight de backend
+## Runtime controlado integrado
+
+El runtime local aislado de OWASP Juice Shop y su negative control están integrados en `main`. La qualification histórica confirmó 12/12 rondas, cero falsos positivos, cero falsos negativos, cero conexiones no autorizadas y cleanup completo. El laboratorio permanece sintético, interno, read-only, sin host ports, Docker socket, privilegios ni egress público.
+
+## Backend OCI y Oracle Cloud Agent
+
+- PR #25: `OPEN_DRAFT`, HEAD `335a76afc303b7411737a729bdff2a761ce67d39`.
+- OCI API preflight `29800920787` attempt 2: SUCCESS.
+- Instancia: `RUNNING`.
+- PR #28: `CLOSED_NOT_MERGED`; command creado una vez, sin reintento.
+- PR #29 recovery run `29831821481`: command exacto identificado; `LIFECYCLE_STATE=ACCEPTED`, `DELIVERY_STATE=EXPIRED`, output `0` bytes.
+- PR #30 run `29832880538`: `BLOCKED_PLUGIN_MISSING`; Run Command no aparece entre 11 plugins observados.
+- PR #31 run `29833641694`: Canonical Ubuntu 22.04, imagen reciente, Run Command ausente del catálogo y de plugins observados; `BLOCKED_PLATFORM_PLUGIN_NOT_LISTED`.
+- Ninguna de estas acciones modificó producción, backend, storage ni tráfico.
+
+El backend productivo todavía no fue inspeccionado. Persistencia, imagen activa, release SHA y rollback permanecen indeterminados.
+
+## PR #32 — OSMH registration diagnostic
 
 - STATUS=`OPEN_DRAFT`
-- HEAD_SHA=`335a76afc303b7411737a729bdff2a761ce67d39`
-- OCI_PREFLIGHT_RUN=`29800920787`
-- OCI_PREFLIGHT_RESULT=`SUCCESS`
-- INSTANCE_LIFECYCLE=`RUNNING`
-- INSTANCE_AGENT_VISIBILITY=`PASS`
-
-La preview exacta continúa bloqueada por `BACKEND_HUNTER_CONTRACT_MISSING` y `promotion_ready=false`.
-
-## PR #28 — inspección read-only original
-
-- STATUS=`CLOSED_NOT_MERGED`
-- HEAD_SHA=`fb1cc8bcfbf0f3d76d5f8860619e953266a388b6`
-- RUN_ID=`29824605280`
-- JOB_ID=`88614940825`
+- HEAD=`90843043e7e84ecd88a65cf829d14a45d203679c`
+- RUN=`29835495223`
 - RESULT=`FAILURE_FAIL_CLOSED`
-- ARTIFACT_ID=`8492864714`
-- ARTIFACT_DIGEST=`sha256:6ffda86943624ddce8f8f3fca1e456fb8dfa4056a34a1203087f16e4f551b444`
-- ARTIFACT_CHECKSUMS=`7/7_VALID`
-- COMMAND_CREATED=`true`
-- TERMINAL_STATE_OBSERVED=`false`
-- SANITIZED_OUTPUT_RECORDED=`false`
-- NEW_COMMAND_RETRY=`false`
+- ARTIFACT=`8497108587`
+- DIGEST=`sha256:607678a5e48172ac9526f4458362debd1bed970cfe38e40d42f1d7c3f8c41964`
+- CHECKSUMS=`3/3_VALID`
+- OSMH result: no clasificable; el paso falló antes de registrar respuesta sanitizada.
+- No hubo reintento automático ni escritura.
 
-PR #28 se cerró sin merge. La rama se conserva porque es la base exacta de PR #29.
-
-## PR #29 — recuperación del resultado existente
+## PR #33 — safe lab dashboard preview v1
 
 - STATUS=`OPEN_DRAFT`
-- BASE_SHA=`fb1cc8bcfbf0f3d76d5f8860619e953266a388b6`
-- HEAD_SHA=`a2a866d3d1d34bde20ab9e869c2aa380058cebab`
-- CHANGED_FILES=`2`
-- BEHIND_BASE=`0`
-- MERGEABLE=`true`
+- BASE=`main`
+- BASE_SHA=`f33015c55fe84508377528c2ff718f9c5b28efe7`
+- HEAD_BRANCH=`deploy/boqa-safe-lab-dashboard-preview-v1`
+- HEAD_SHA=`3db1220f65ff089444ae781833356295f72bba9f`
+- CHANGED_FILES=`1`
+- APPLICATION_CODE_CHANGED=`false`
 
-Archivos finales:
+### Gates exactos
 
-- `.github/workflows/boqa-backend-execution-summary-recovery-v3.yml`
-- `test/test-backend-execution-summary-recovery-v3.js`
+- Browser Smoke run `29854047640`: SUCCESS.
+- Browser artifact `8504555821`.
+- Browser digest `sha256:a7a0b760a3d7fce02fcff2b5c2da9648609f3a8e1126236c60a6eb1cd74f14cc`.
+- Real Docker Qualification run `29854048094`: SUCCESS.
+- Docker artifact `8504582965`.
+- Docker digest `sha256:af395d7d678fdf8ac471a93a14d520fd8aa6872b72e2f5a996d75d17dfdb3d0e`.
+- Cloudflare Exact Preview V6 run `29854047646`: SUCCESS.
+- Preview artifact `8504597574`.
+- Preview digest `sha256:fee42e045198e64b8308c7dc8d3334408c7fcd5869e68ac4b692bd9a0b675d94`.
+- Preview artifact checksums: `16/16_VALID`.
 
-### Recuperación V3
+### Candidate Cloudflare
 
-- RUN_ID=`29831821481`
-- JOB_ID=`88638214819`
-- RESULT=`FAILURE_FAIL_CLOSED`
-- ARTIFACT_ID=`8495615436`
-- ARTIFACT_DIGEST=`sha256:30dab7da04881e6c70e6423558eac9ac66ba1cda6be7ba9f27e4014ec200c442`
-- ARTIFACT_CHECKSUMS=`6/6_VALID`
-- COMMAND_ID_HASH_MATCHED=`true`
-- EXECUTION_SUMMARY_MATCH_COUNT=`1`
-- LIFECYCLE_STATE=`ACCEPTED`
-- DELIVERY_STATE=`EXPIRED`
-- OUTPUT_BYTES=`0`
-- SANITIZED_OUTPUT_RECORDED=`false`
-- NEW_COMMAND_CREATED=`false`
-- COMMAND_CANCELED=`false`
+- BUILD_UUID=`a29ef26e-f5d7-47b8-b2d0-f278cc0db79f`
+- VERSION_ID=`0f896f48-b58c-41eb-8db7-2a092a8c1aa2`
+- VERSION_NUMBER=`75`
+- PREVIEW_URL=`https://0f896f48-boqa.simondalmasso44.workers.dev`
+- CANDIDATE_TRAFFIC=`0%`
 - PRODUCTION_CHANGED=`false`
+- DEPLOY_PERFORMED=`false`
 
-El comando exacto fue identificado por el SHA-256 registrado en el artifact original. `EXPIRED` demuestra que la instancia no retiró la orden antes de la expiración. El payload de inspección no está demostrado como ejecutado.
+### Estado veraz del dashboard
 
-## PR #30 — estado observado de Oracle Cloud Agent
-
-- STATUS=`OPEN_DRAFT`
-- BASE_SHA=`a2a866d3d1d34bde20ab9e869c2aa380058cebab`
-- HEAD_SHA=`38f47c3dae02393db3e79ed90cefe01b84c5e2d3`
-- CHANGED_FILES=`2`
-- BEHIND_BASE=`0`
-- MERGEABLE=`true`
-- RUN_ID=`29832880538`
-- JOB_ID=`88641716928`
-- RESULT=`SUCCESS`
-- ARTIFACT_ID=`8496047189`
-- ARTIFACT_DIGEST=`sha256:5df29ec7a6fc145107fba364683ee367ff1e0a8f8b22270fc9573a9c001ef8fb`
-- ARTIFACT_CHECKSUMS=`6/6_VALID`
-- INSTANCE_LIFECYCLE=`RUNNING`
-- AGENT_CONFIG_PRESENT=`true`
-- ALL_PLUGINS_DISABLED=`false`
-- MANAGEMENT_DISABLED=`false`
-- RUN_COMMAND_DESIRED_STATE=`DEFAULT`
-- OBSERVED_PLUGIN_TOTAL=`11`
-- RUN_COMMAND_OBSERVED_MATCHES=`0`
-- CLASSIFICATION=`BLOCKED_PLUGIN_MISSING`
-- COMMAND_API_USED=`false`
-- PRODUCTION_CHANGED=`false`
-
-La configuración no deshabilita plugins ni management. El plugin Compute Instance Run Command no aparece en el conjunto observado de la instancia.
-
-## PR #31 — compatibilidad de imagen y catálogo de plugins
-
-- STATUS=`OPEN_DRAFT`
-- BASE_SHA=`38f47c3dae02393db3e79ed90cefe01b84c5e2d3`
-- HEAD_SHA=`7cffe43e457b91ade200268cf43c782d127ecb1b`
-- CHANGED_FILES=`2`
-- BEHIND_BASE=`0`
-- MERGEABLE=`true`
-- RUN_ID=`29833641694`
-- JOB_ID=`88644319715`
-- RESULT=`SUCCESS`
-- ARTIFACT_ID=`8496368042`
-- ARTIFACT_DIGEST=`sha256:a12ae8ff9aee9436a4cc811a8f27cc3aee3fecaa4fbacbc7a0db028a694125af`
-- ARTIFACT_CHECKSUMS=`6/6_VALID`
-- OPERATING_SYSTEM=`Canonical Ubuntu`
-- OPERATING_SYSTEM_VERSION=`22.04`
-- IMAGE_PRE_OCTOBER_2020=`false`
-- IMAGE_AGE_BUCKET=`LT_1Y`
-- AVAILABLE_PLUGIN_TOTAL=`11`
-- RUN_COMMAND_AVAILABLE_MATCHES=`0`
-- OBSERVED_PLUGIN_TOTAL=`11`
-- RUN_COMMAND_OBSERVED_MATCHES=`0`
-- CLASSIFICATION=`BLOCKED_PLATFORM_PLUGIN_NOT_LISTED`
-- COMMAND_API_USED=`false`
-- PRODUCTION_CHANGED=`false`
-
-La imagen es reciente y no entra en el caso documentado de imágenes anteriores a octubre de 2020. Run Command no aparece ni en el catálogo de plugins devuelto para la imagen ni en el conjunto observado de la instancia. Esto no prueba que Ubuntu 22.04 sea incompatible de forma general; prueba un gap de imagen, instalación o catálogo en esta instancia.
-
-Todas las etiquetas temporales de PR #29, PR #30 y PR #31 fueron retiradas. No hubo reintento automático ni segunda orden remota.
+- Preview readiness: PASS, HTTP 200.
+- Worker health: `ok`, backend configurado.
+- Backend health: `ok`, versión `1.4.0`.
+- Backend release SHA: indeterminado.
+- `/api/hunter/status`: `404 text/html`.
+- CLASSIFICATION=`BLOCKED_BACKEND_CONTRACT`.
+- BLOCKER=`BACKEND_HUNTER_CONTRACT_MISSING`.
+- PROMOTION_READY=`false`.
+- Dashboard overall: `DEGRADED`.
+- Desktop 1440: PASS.
+- Mobile 390: PASS.
+- Mobile 360: PASS.
+- Page errors: `0`.
+- Unexpected critical console errors: `0`.
+- Unexpected failed requests: `0`.
+- Horizontal overflow: `0`.
+- Private and unused operational paths concealed: PASS.
+- Deployment snapshot before/after: identical.
 
 ## Producción preservada
 
-Última evidencia disponible:
+Última identidad productiva observada:
 
 - ACTIVE_DEPLOYMENT_ID=`71016a2b-edc4-4786-8bf4-b56749507554`
 - ACTIVE_VERSION_ID=`136e5689-91d3-4431-8af0-d8b3248c6e3c`
@@ -145,27 +109,27 @@ Revalidar antes de cualquier promoción.
 
 ## Bloqueos vigentes
 
-- Compute Instance Run Command no está disponible en la instalación observada de Oracle Cloud Agent.
-- Backend hunter no verificado.
-- Persistencia, imagen activa del contenedor, release SHA y rollback no inspeccionados.
+- `BACKEND_HUNTER_CONTRACT_MISSING`.
+- Oracle Cloud Agent no expone Run Command en la instancia observada.
+- Backend release SHA indeterminado.
+- Persistencia, container activo y rollback no inspeccionados.
 - Preview no promocionable.
-- SHA productivo indeterminado.
-- PR #25, PR #29, PR #30 y PR #31 permanecen Draft o abiertos según lo indicado.
 
 ## Decisión operativa
 
-- No crear otro Run Command automáticamente.
-- No habilitar, instalar, actualizar ni reiniciar Oracle Cloud Agent sin autorización de mutación.
-- No mergear, desplegar ni promover.
-- La siguiente acción requiere acceso al host para inspeccionar versión/paquete/logs del agente o aplicar una reparación controlada con rollback.
+- Mantener PR #33 Draft y candidata al 0%.
+- No promover ni mergear.
+- Usar la URL de preview para revisión visual inmediata.
+- Continuar la ruta segura usando el laboratorio controlado ya validado.
+- No afirmar `ACTIVE` hasta que exista contrato hunter real, ciclo fresco, scheduler, heartbeat y storage válido.
 
 ## Estado documental
 
 - HANDOFF_BRANCH=`docs/boqa-handoff-pr25-reconstructed`
 - VERSIONED_HANDOFF_RECONCILED=`true`
-- CANONICAL_DRIVE_SYNC=`COMPLETE`
-- DOCUMENTED_PR31_HEAD=`7cffe43e457b91ade200268cf43c782d127ecb1b`
+- CANONICAL_DRIVE_SYNC=`PENDING_PR33_UPDATE`
+- DOCUMENTED_PR33_HEAD=`3db1220f65ff089444ae781833356295f72bba9f`
 
 ## Siguiente acción exacta
 
-Obtener autorización explícita para una intervención controlada en la instancia: inspeccionar localmente Oracle Cloud Agent y, sólo si corresponde, instalar/actualizar o habilitar el plugin Run Command con respaldo, evidencia y rollback.
+Revisar el dashboard en la preview `0f896f48...`; mientras tanto, construir una ruta segura de ciclos frescos desde el laboratorio controlado hacia un contrato hunter separado de producción, manteniendo el dashboard fail-closed y la candidata al 0%.
