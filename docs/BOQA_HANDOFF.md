@@ -100,6 +100,19 @@ Validación browser de preview:
 
 No se reintentó ninguno de los preflights fallidos.
 
+### Provisión OCI API autorizada en curso
+
+- Simón autorizó explícitamente la incorporación de una nueva clave pública de firma OCI para GitHub Actions.
+- El par RSA de 2048 bits se generó en OCI Cloud Shell exclusivamente bajo `/tmp`; la clave privada no fue escrita ni descargada en la PC del usuario.
+- La correspondencia entre clave privada y pública fue verificada antes de la carga.
+- La carga de la clave pública en el usuario OCI resultó PASS.
+- El conteo de claves API pasó de 1 a 2; no se eliminó ni reemplazó la clave previa.
+- El fingerprint nuevo quedó capturado únicamente en un archivo temporal de Cloud Shell; no se imprimió ni registró en GitHub, Drive, PR, logs o chat.
+- GitHub CLI oficial `2.96.0` para Linux ARM64 fue descargado bajo `/tmp` y validado contra el checksum oficial.
+- `GH_CONFIG_DIR` apunta exclusivamente a `/tmp`; la sesión autenticada corresponde a `simonkey888` con permiso `ADMIN` sobre `simonkey888/boqa`.
+- No se habilitó autenticación Git, no se crearon todavía los siete repository secrets y no se reejecutó el preflight OCI.
+- No hubo consulta de backend, comando sobre instancia, deploy, restart, cambio de tráfico, cambio de almacenamiento ni modificación productiva.
+
 ## Producción preservada
 
 Los snapshots Cloudflare antes y después de Preview V6 fueron idénticos:
@@ -112,20 +125,22 @@ Estos IDs corresponden a la última evidencia auditada de Preview V6. Deben reva
 
 ## Bloqueos actuales
 
-- No existe una ruta autorizada y completa de acceso al backend desde GitHub Actions.
+- La ruta OCI API está parcialmente provisionada, pero aún no existe una ruta autorizada y completa de acceso al backend desde GitHub Actions.
+- Faltan resolver de forma inequívoca la instancia propia y su compartimento, y crear los repository secrets canónicos.
 - El backend activo no ofrece `/api/hunter/status`.
 - La preview exacta informa `promotion_ready=false`.
 - `BOQA_RELEASE_SHA` productivo continúa indeterminado.
-- Backend, persistencia y rollback no pueden validarse integralmente sin una ruta de acceso.
+- Backend, persistencia y rollback no pueden validarse integralmente sin una ruta de acceso completa.
 
 ## Decisión operativa
 
 - PR #25 permanece Draft.
 - No mergear PR #25 todavía.
 - No desplegar backend ni promover Worker.
-- La ruta preferida para el próximo intento es OCI API control-plane.
+- La ruta seleccionada es OCI API control-plane; SSH no se configura ni se reintenta.
 - Los valores sensibles deben configurarse únicamente en GitHub Actions; nunca copiarlos al chat, PR, logs, dashboard, artifacts o handoffs.
-- Después de completar una sola ruta, ejecutar únicamente su preflight. Detener ante el primer fallo y no reintentar automáticamente.
+- Después de completar la ruta OCI, ejecutar únicamente su preflight. Detener ante el primer fallo y no reintentar automáticamente.
+- La clave API previa se conserva hasta que la nueva ruta sea validada; cualquier revocación posterior requiere identificación inequívoca por fingerprint y autorización explícita.
 
 ## Reglas permanentes
 
@@ -146,4 +161,4 @@ Estos IDs corresponden a la última evidencia auditada de Preview V6. Deben reva
 
 ## Siguiente acción exacta
 
-Simón configura en GitHub Actions las categorías completas de la ruta OCI API autorizada y avisa `OCI listo`. Reejecutar únicamente el preflight OCI de PR #25; no mergear ni desplegar.
+Resolver automáticamente y sin imprimir identificadores la instancia OCI propia y su compartimento. Crear después los siete repository secrets canónicos desde Cloud Shell temporal y reejecutar únicamente el preflight OCI de PR #25; no mergear ni desplegar.
