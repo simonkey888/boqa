@@ -19,7 +19,7 @@ jobs:
     if: >-
       github.event.action == 'labeled' &&
       github.event.label.name == 'authorized-backend-agent-compatibility-diagnostic' &&
-      github.event.pull_request.number == 0 &&
+      github.event.pull_request.number == 31 &&
       github.event.pull_request.draft == true &&
       github.event.pull_request.base.sha == '38f47c3dae02393db3e79ed90cefe01b84c5e2d3' &&
       github.event.pull_request.head.ref == 'deploy/boqa-backend-agent-compatibility-diagnostic-v1' &&
@@ -34,7 +34,7 @@ jobs:
       SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
       DIAGNOSTIC_BASE_SHA: 38f47c3dae02393db3e79ed90cefe01b84c5e2d3
       REQUIRED_BRANCH: deploy/boqa-backend-agent-compatibility-diagnostic-v1
-      EXPECTED_PR_NUMBER: '0'
+      EXPECTED_PR_NUMBER: '31'
       AUTH_LABEL: ${{ github.event.label.name }}
       EVIDENCE_DIR: output/backend-agent-compatibility-diagnostic-v1
 
