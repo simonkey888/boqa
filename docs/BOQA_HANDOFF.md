@@ -175,7 +175,7 @@ Estos identificadores deben revalidarse antes de cualquier promoción. PR #28 no
 - `BOQA_RELEASE_SHA` productivo continúa indeterminado.
 - Persistencia y rollback todavía no fueron inspeccionados desde el runtime productivo.
 - PR #25 y PR #28 permanecen Draft.
-- El documento canónico de Drive todavía requiere sincronización de esta actualización.
+- El documento canónico de Drive fue sincronizado con el estado mínimo verificable de PR #28.
 
 ## Decisión operativa
 
@@ -201,7 +201,7 @@ Estos identificadores deben revalidarse antes de cualquier promoción. PR #28 no
 
 - `HANDOFF_BRANCH=docs/boqa-handoff-pr25-reconstructed`
 - `VERSIONED_HANDOFF_UPDATED=true`
-- `CANONICAL_DRIVE_SYNC=PENDING`
+- `CANONICAL_DRIVE_SYNC=COMPLETE`
 
 ## Siguiente acción exacta
 
