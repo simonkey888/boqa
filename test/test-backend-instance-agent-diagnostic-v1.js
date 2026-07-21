@@ -11,7 +11,7 @@ assert.match(workflow, /^on:\n  pull_request:\n    branches:\n      - deploy\/bo
 assert.doesNotMatch(workflow, /^\s+(pull_request_target|push|schedule|workflow_dispatch):/m);
 assert.match(workflow, /permissions:\n  contents: read/);
 assert.doesNotMatch(workflow, /permissions:\s*write|contents:\s*write|actions:\s*write/);
-assert.match(workflow, /github\.event\.pull_request\.number == 0/);
+assert.match(workflow, /github\.event\.pull_request\.number == 30/);
 assert.match(workflow, /github\.event\.pull_request\.draft == true/);
 assert.match(workflow, new RegExp(`github\\.event\\.pull_request\\.base\\.sha == '${base}'`));
 assert.match(workflow, new RegExp(`github\\.event\\.pull_request\\.head\\.ref == '${branch}'`));
@@ -20,7 +20,7 @@ assert.match(workflow, /github\.actor == github\.repository_owner/);
 assert.match(workflow, /BOQA_AUTONOMOUS_READONLY=AUTHORIZED/);
 assert.match(workflow, /github\.run_attempt == 1/);
 assert.match(workflow, /github\.run_number == 1/);
-assert.match(workflow, /EXPECTED_PR_NUMBER: '0'/);
+assert.match(workflow, /EXPECTED_PR_NUMBER: '30'/);
 assert.match(workflow, /INSTANCE_AGENT_DIAGNOSTIC=COMPLETE/);
 assert.match(workflow, /BACKEND_INSPECTED=false/);
 assert.match(workflow, /PRODUCTION_CHANGED=false/);
