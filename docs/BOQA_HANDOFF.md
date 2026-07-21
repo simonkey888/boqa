@@ -1,12 +1,13 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-21T00:47:04-03:00  
+LAST_VERIFIED_AT=2026-07-21T01:01:27-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
 ## Estado verificado
 
 - `REPOSITORY=simonkey888/boqa`
-- `MAIN_SHA=620ce2bfae2cbd23b2fa2e220fd3fd1ee930177c`
+- `LAST_MATERIAL_MAIN_SHA=620ce2bfae2cbd23b2fa2e220fd3fd1ee930177c`
+- `MAIN_HEAD_POLICY=VERIFY_REMOTE_ON_READ`
 - `LAST_MERGED_PR=PR #26`
 - `MERGE_METHOD=SQUASH`
 - `MERGED_PR_HEAD=969ebdd3cc87e56d8407694c18dbd5a3df870e3d`
@@ -14,6 +15,8 @@ TIMEZONE=America/Argentina/Cordoba
 - `PRODUCTION_CHANGED=false`
 - `DEPLOY_PERFORMED=false`
 - `ROLLBACK_EXECUTED=false`
+
+`LAST_MATERIAL_MAIN_SHA` identifica el último commit de `main` que cambió código o workflows. Un commit exclusivamente documental puede avanzar el HEAD remoto sin alterar el estado material. Por eso el HEAD actual de `main` debe verificarse siempre en GitHub antes de actuar.
 
 PR #26 fue integrado con protección sobre el HEAD exacto autorizado. El merge incorporó únicamente el mecanismo Cloudflare exact-preview y su clasificación fail-closed. No se promovió ninguna versión, no se modificó tráfico y no se desplegó backend.
 
@@ -79,7 +82,7 @@ Los snapshots productivos antes y después de la preview fueron idénticos:
 - `ACTIVE_VERSION_ID=136e5689-91d3-4431-8af0-d8b3248c6e3c`
 - `ACTIVE_TRAFFIC=100%`
 
-Estos IDs fueron revalidados por la evidencia de Preview V6 previa al merge. El merge Git no realizó una operación Cloudflare ni backend. No existe un run asociado al commit de merge dentro de los runs consultables por commit.
+Estos IDs fueron revalidados por la evidencia de Preview V6 previa al merge. El merge Git no realizó una operación Cloudflare ni backend. No existe un run productivo asociado al commit de merge dentro de los runs consultables por commit.
 
 ## Backend preflight
 
@@ -87,7 +90,7 @@ Estos IDs fueron revalidados por la evidencia de Preview V6 previa al merge. El 
 - `BRANCH=deploy/boqa-backend-preflight-v2`
 - `HEAD=3925e8784f68c3a0084be161804b39a934512c1c`
 - `STATUS=BLOCKED_BY_EXTERNAL_ACCESS`
-- El PR quedó basado en el `main` anterior y actualmente no es mergeable.
+- El PR quedó basado en un `main` anterior y actualmente no es mergeable.
 - SSH: faltan host remoto y clave bajo los nombres aceptados.
 - OCI API: faltan identidad, firma, región, compartimento y resolución de instancia.
 - Browser y Docker del preflight: SUCCESS.
@@ -108,7 +111,7 @@ Estos IDs fueron revalidados por la evidencia de Preview V6 previa al merge. El 
 - Backend productivo inaccesible desde GitHub Actions por falta de ruta SSH u OCI API.
 - `/api/hunter/status` no existe en el backend productivo activo.
 - `BOQA_RELEASE_SHA` productivo continúa indeterminado.
-- PR #25 necesita reconstruirse o rebasarse sobre `main=620ce2bfae2cbd23b2fa2e220fd3fd1ee930177c` antes de cualquier integración.
+- PR #25 necesita reconstruirse o rebasarse sobre el HEAD remoto actual de `main` antes de cualquier integración.
 - La versión preview `4177d937-f2d0-4a5b-9e69-9bad46a95279` no es promocionable mientras falte el contrato backend.
 
 ## Reglas permanentes
@@ -122,13 +125,6 @@ Estos IDs fueron revalidados por la evidencia de Preview V6 previa al merge. El 
 - No declarar producción actualizada sin versión, deployment, tráfico, health, browser smoke y rollback verificados.
 - Mantener sincronizados este archivo y el documento canónico de Drive.
 
-## Estado de esta actualización documental
-
-- `HANDOFF_BRANCH=docs/boqa-handoff-post-pr26`
-- Esta rama parte exactamente de `main=620ce2bfae2cbd23b2fa2e220fd3fd1ee930177c`.
-- No se abrió PR automáticamente para evitar disparar Browser, Docker y otra preview Cloudflare sólo por un cambio documental.
-- `main` todavía contiene el handoff pre-merge hasta que esta actualización documental sea integrada mediante un PR separado y autorizado.
-
 ## Siguiente acción exacta
 
-Abrir un PR documental desde `docs/boqa-handoff-post-pr26` hacia `main`, revisar que el diff contenga únicamente `docs/BOQA_HANDOFF.md` y decidir si se permite omitir o aceptar los gates automáticos que se dispararán. No desplegar.
+Verificar el HEAD remoto actual de `main` y reconstruir o rebasar PR #25 sobre esa base, conservando únicamente los preflights sanitizados SSH/OCI. Reejecutar sólo la ruta de acceso que tenga todas sus entradas configuradas; si ninguna está completa, mantener el PR en Draft y no desplegar.
