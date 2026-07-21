@@ -10,7 +10,7 @@ const branch = 'deploy/boqa-backend-agent-compatibility-diagnostic-v1';
 assert.match(workflow, /^on:\n  pull_request:\n    branches:\n      - deploy\/boqa-backend-instance-agent-diagnostic-v1\n    types:\n      - labeled/m);
 assert.doesNotMatch(workflow, /^\s+(pull_request_target|push|schedule|workflow_dispatch):/m);
 assert.match(workflow, /permissions:\n  contents: read/);
-assert.match(workflow, /github\.event\.pull_request\.number == 0/);
+assert.match(workflow, /github\.event\.pull_request\.number == 31/);
 assert.match(workflow, /github\.event\.pull_request\.draft == true/);
 assert.match(workflow, new RegExp(`github\\.event\\.pull_request\\.base\\.sha == '${base}'`));
 assert.match(workflow, new RegExp(`github\\.event\\.pull_request\\.head\\.ref == '${branch}'`));
@@ -18,7 +18,7 @@ assert.match(workflow, /github\.actor == github\.repository_owner/);
 assert.match(workflow, /BOQA_AUTONOMOUS_READONLY=AUTHORIZED/);
 assert.match(workflow, /github\.run_attempt == 1/);
 assert.match(workflow, /github\.run_number == 1/);
-assert.match(workflow, /EXPECTED_PR_NUMBER: '0'/);
+assert.match(workflow, /EXPECTED_PR_NUMBER: '31'/);
 
 assert.strictEqual((workflow.match(/oci\s+compute\s+instance\s+get\b/g) || []).length, 1);
 assert.strictEqual((workflow.match(/oci\s+compute\s+image\s+get\b/g) || []).length, 1);
