@@ -1,6 +1,6 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-21T00:26:00-03:00  
+LAST_VERIFIED_AT=2026-07-21T00:31:00-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
 ## Estado verificado
@@ -11,7 +11,7 @@ TIMEZONE=America/Argentina/Cordoba
 - `PRODUCTION_SHA=INDETERMINADO`
 - Producción no fue modificada por los flujos de preview ni preflight.
 
-## Producto integrado
+## Producto integrado en main
 
 - Frontera privada oculta en el Worker público.
 - API pública limitada a `GET /api/health` y `GET /api/hunter/status`.
@@ -23,46 +23,65 @@ TIMEZONE=America/Argentina/Cordoba
 - `PR=26`
 - `BRANCH=deploy/boqa-cloudflare-preview-v6`
 - `BASE_SHA=bc6f45acefe693f3cc2940d91f715d11ee50da93`
-- `PREVIOUS_HEAD=b763913ddf23b36d98ef5233ae3bf8bb1374bcbe`
+- `VALIDATED_CODE_SHA=964784161ca06f591b6b4f9cff52f80f30969535`
 - `LAST_CODE_FIX_SHA=bc3b34f9486362ace3bc47c11f910b5c289abeea`
-- `STATUS=CI_RERUN_PENDING`
+- `CLASSIFICATION=BLOCKED_BACKEND_CONTRACT`
+- `BLOCKER=BACKEND_HUNTER_CONTRACT_MISSING`
 - `PROMOTION_READY=false`
 - `PRODUCTION_CHANGED=false`
 - `DEPLOY_PERFORMED=false`
+- `ROLLBACK_EXECUTED=false`
 
-### Gates del HEAD anterior
+Este archivo es un descendiente exclusivamente documental del SHA de código validado. Antes de integrar, verificar el HEAD remoto final y exigir los tres gates verdes sobre ese mismo HEAD; registrar esa identidad final en el body del PR.
 
-- Browser Smoke run `29699660940`: SUCCESS.
-- Browser artifact `8446068371`; digest `sha256:a52b6ec205a9e0eabc53940d32b85f88fc48cf27b03b589901efe92ec4142d25`.
-- Real Docker Qualification run `29699660937`: SUCCESS.
-- Docker artifact `8446073928`; digest `sha256:fa2b258024b5908442b5bae1ea99996517f3e12cb6d62b00cb7287e34b4e9065`.
-- Cloudflare Preview V6 run `29699661015`: FAILURE.
-- Preview artifact `8446090384`; digest `sha256:4a25ec6fa53ccddd2f80f85c9e18ee992a69ecfdb18c92b4d28436630da0d58a`.
+### Gates sobre el SHA de código validado
 
-### Diagnóstico causal
+- Browser Smoke run `29798562033`: SUCCESS.
+- Browser artifact `8482903600`; digest `sha256:67dc65af3d968f09d4d0a60fd6e8189bb3bf0b8ab9cd2be139ed21f36881400c`.
+- Real Docker Qualification run `29798562034`: SUCCESS.
+- Docker artifact `8482917456`; digest `sha256:02349f34457d7815625a14241e9a1bc100989b7ac8fccf954053201a9b755ff0`.
+- Cloudflare Preview V6 run `29798562036`: SUCCESS.
+- Preview artifact `8482929433`; digest `sha256:a587b3ff50f0acae752c01e2d9c9a452f29c12dcc96e5431989078887cbd4427`.
+- Preview artifact checksums: `16/16` válidos.
 
-La versión exacta fue construida correctamente y el deployment productivo permaneció idéntico antes y después. El backend activo respondió:
+### Preview exacta auditada
 
-- `/api/health`: 200, `status=ok`;
-- `/api/hunter/status`: 404 sin contrato hunter válido.
+- `BUILD_UUID=91e85df3-d30a-4ce8-ac64-5c6b4638d67f`
+- `VERSION_ID=c14f70e3-d667-4f3c-9734-26b8689c81a9`
+- `VERSION_NUMBER=70`
+- `PREVIEW_URL=https://c14f70e3-boqa.simondalmasso44.workers.dev`
+- `HEAD_SHA=964784161ca06f591b6b4f9cff52f80f30969535`
 
-La clasificación `BLOCKED_BACKEND_CONTRACT` fue correcta. El fallo ocurrió después, en el browser smoke, porque el dashboard mostró `Respuesta JSON inválida` para el 404 HTML y el test exigía exclusivamente `Respuesta HTTP 404`.
+El deployment productivo fue idéntico antes y después:
 
-### Corrección aplicada
+- `ACTIVE_DEPLOYMENT_ID=71016a2b-edc4-4786-8bf4-b56749507554`
+- `ACTIVE_VERSION_ID=136e5689-91d3-4431-8af0-d8b3248c6e3c`
+- `ACTIVE_TRAFFIC=100%`
 
-El smoke mantiene como condiciones obligatorias:
+Estos IDs fueron revalidados mediante la evidencia de Preview V6. No se promovió la versión candidata.
 
-- estado general `DEGRADED`;
-- hunter `UNAVAILABLE`;
-- health `FRESH` y `ok`;
-- clasificación directa del endpoint como 404;
-- cero page errors;
-- cero errores críticos inesperados;
-- cero requests fallidos inesperados;
-- cero overflow horizontal;
-- desktop 1440, mobile 390 y mobile 360.
+### Contratos y browser smoke de preview
 
-Para el motivo visible del hunter acepta únicamente las dos representaciones veraces posibles del mismo 404 según el transporte: `Respuesta HTTP 404` o `Respuesta JSON inválida`. El valor observado se registra en la evidencia por viewport.
+- Worker `/health`: 200, `status=ok`, backend configurado.
+- Backend `/api/health`: 200, `status=ok`, versión `1.4.0`.
+- Backend `/api/hunter/status`: 404 HTML.
+- Dashboard: `DEGRADED` veraz; hunter `UNAVAILABLE`; health `FRESH` y `ok`.
+- Motivo observado del hunter: `Respuesta JSON inválida`.
+- Desktop 1440: PASS.
+- Mobile 390: PASS.
+- Mobile 360: PASS.
+- Page errors: 0.
+- Errores críticos inesperados de consola: 0.
+- Requests fallidos inesperados: 0.
+- Overflow horizontal: 0.
+- Rutas privadas y operativas ocultas: PASS.
+- Capturas inspeccionadas visualmente: PASS.
+
+### Diagnóstico y corrección
+
+El run anterior clasificó correctamente el backend como `BLOCKED_BACKEND_CONTRACT`, pero el smoke exigía sólo `Respuesta HTTP 404` mientras el transporte del dashboard representaba el 404 HTML como `Respuesta JSON inválida`.
+
+La corrección conserva la clasificación directa del endpoint como 404 y acepta únicamente esas dos representaciones veraces del mismo bloqueo. El motivo observado se registra por viewport. No se modificó el dashboard, el Worker productivo, el backend ni el tráfico.
 
 ## Backend preflight
 
@@ -95,4 +114,4 @@ Para el motivo visible del hunter acepta únicamente las dos representaciones ve
 
 ## Siguiente acción exacta
 
-Verificar el HEAD final de PR #26 y auditar Browser Smoke, Real Docker Qualification y Cloudflare Preview V6 sobre ese mismo SHA. Integrar únicamente el mecanismo de entrega si los tres gates quedan verdes y la preview conserva `promotion_ready=false` mientras falte el contrato backend.
+Verificar los tres gates sobre el HEAD documental final de PR #26. Si quedan verdes y el diff respecto de `964784161ca06f591b6b4f9cff52f80f30969535` contiene únicamente este handoff, actualizar el body del PR y Drive. No mergear ni desplegar sin autorización explícita nueva.
