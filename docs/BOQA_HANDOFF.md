@@ -1,6 +1,6 @@
 # BOQA — Handoff operativo vivo
 
-LAST_VERIFIED_AT=2026-07-19T15:35:00-03:00  
+LAST_VERIFIED_AT=2026-07-21T00:26:00-03:00  
 TIMEZONE=America/Argentina/Cordoba
 
 ## Estado verificado
@@ -18,40 +18,51 @@ TIMEZONE=America/Argentina/Cordoba
 - Dashboard validado en desktop 1440, mobile 390 y mobile 360.
 - Browser y Docker finales sobre `main`: PASS.
 
-## Diagnóstico Cloudflare concluido
+## Flujo activo — PR #26 Cloudflare preview v6
 
-Los builds exactos de PR #24 demostraron:
-
-- Workers Builds configurado sólo para preview;
-- trigger productivo igual a cero;
-- build fijado a rama y SHA exactos;
-- versión y preview URL identificables;
-- deployment productivo idéntico antes y después;
-- `/health` del Worker: 200;
-- `/api/health` del backend: 200 y `status=ok`;
-- `/api/hunter/status` del backend activo: 404 HTML;
-- la ruta histórica `/api/defensive/status`: 404 HTML;
-- no existe un contrato hunter semánticamente válido en el backend productivo actual.
-
-No se mapeará el health del agente antiguo a `Hunter ACTIVE`: sería una afirmación falsa.
-
-## Flujo activo — Cloudflare preview v6
-
+- `PR=26`
 - `BRANCH=deploy/boqa-cloudflare-preview-v6`
 - `BASE_SHA=bc6f45acefe693f3cc2940d91f715d11ee50da93`
-- `STATUS=IN_PROGRESS`
+- `PREVIOUS_HEAD=b763913ddf23b36d98ef5233ae3bf8bb1374bcbe`
+- `LAST_CODE_FIX_SHA=bc3b34f9486362ace3bc47c11f910b5c289abeea`
+- `STATUS=CI_RERUN_PENDING`
+- `PROMOTION_READY=false`
+- `PRODUCTION_CHANGED=false`
+- `DEPLOY_PERFORMED=false`
 
-Objetivo del gate limpio:
+### Gates del HEAD anterior
 
-1. construir una versión exacta mediante Builds API;
-2. demostrar que producción no cambia;
-3. validar rutas privadas y operativas ocultas;
-4. clasificar la preview como `PROMOTION_READY` o `BLOCKED_BACKEND_CONTRACT`;
-5. cuando el backend carezca de hunter, validar la degradación honesta del dashboard en desktop/390/360;
-6. concluir SUCCESS como gate operativo sólo si la clasificación y la evidencia son coherentes;
-7. mantener `promotion_ready=false` mientras falte el contrato backend.
+- Browser Smoke run `29699660940`: SUCCESS.
+- Browser artifact `8446068371`; digest `sha256:a52b6ec205a9e0eabc53940d32b85f88fc48cf27b03b589901efe92ec4142d25`.
+- Real Docker Qualification run `29699660937`: SUCCESS.
+- Docker artifact `8446073928`; digest `sha256:fa2b258024b5908442b5bae1ea99996517f3e12cb6d62b00cb7287e34b4e9065`.
+- Cloudflare Preview V6 run `29699661015`: FAILURE.
+- Preview artifact `8446090384`; digest `sha256:4a25ec6fa53ccddd2f80f85c9e18ee992a69ecfdb18c92b4d28436630da0d58a`.
 
-El workflow puede quedar integrado aunque clasifique correctamente un bloqueo externo. Esa conclusión no autoriza promoción productiva.
+### Diagnóstico causal
+
+La versión exacta fue construida correctamente y el deployment productivo permaneció idéntico antes y después. El backend activo respondió:
+
+- `/api/health`: 200, `status=ok`;
+- `/api/hunter/status`: 404 sin contrato hunter válido.
+
+La clasificación `BLOCKED_BACKEND_CONTRACT` fue correcta. El fallo ocurrió después, en el browser smoke, porque el dashboard mostró `Respuesta JSON inválida` para el 404 HTML y el test exigía exclusivamente `Respuesta HTTP 404`.
+
+### Corrección aplicada
+
+El smoke mantiene como condiciones obligatorias:
+
+- estado general `DEGRADED`;
+- hunter `UNAVAILABLE`;
+- health `FRESH` y `ok`;
+- clasificación directa del endpoint como 404;
+- cero page errors;
+- cero errores críticos inesperados;
+- cero requests fallidos inesperados;
+- cero overflow horizontal;
+- desktop 1440, mobile 390 y mobile 360.
+
+Para el motivo visible del hunter acepta únicamente las dos representaciones veraces posibles del mismo 404 según el transporte: `Respuesta HTTP 404` o `Respuesta JSON inválida`. El valor observado se registra en la evidencia por viewport.
 
 ## Backend preflight
 
@@ -84,4 +95,4 @@ El workflow puede quedar integrado aunque clasifique correctamente un bloqueo ex
 
 ## Siguiente acción exacta
 
-Agregar el gate preview v6 limpio, abrir Draft PR, exigir Browser y Docker verdes, obtener una clasificación Cloudflare verificable y fusionar únicamente el mecanismo de entrega. Mantener producción sin cambios y PR #25 bloqueado hasta disponer de acceso backend.
+Verificar el HEAD final de PR #26 y auditar Browser Smoke, Real Docker Qualification y Cloudflare Preview V6 sobre ese mismo SHA. Integrar únicamente el mecanismo de entrega si los tres gates quedan verdes y la preview conserva `promotion_ready=false` mientras falte el contrato backend.
