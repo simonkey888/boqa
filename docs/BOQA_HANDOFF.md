@@ -56,17 +56,6 @@ Archivos finales:
 - `.github/workflows/boqa-backend-execution-summary-recovery-v3.yml`
 - `test/test-backend-execution-summary-recovery-v3.js`
 
-### Diagnóstico de collectors anteriores
-
-- Run variable-gated `29829310438`: SKIPPED antes de ejecutar pasos.
-- Run autónomo `29829783699`: falló al autenticar el comando.
-- Artifact `8494781041`; digest `sha256:d94750571850491e6aba69f689d72bea95c18ac471d6b4b8c9a57a10fd0770f9`.
-- Diagnóstico `29830245100`: SUCCESS; confirmó una coincidencia por nombre, pero el collector leía el campo de ID equivocado.
-- Clasificador `29830535734`: SUCCESS; el valor incorrecto produjo `NotAuthorizedOrNotFound`/404.
-- Recuperación V2 `29831204462`: falló con `COMMAND_ID_HASH_MISMATCH`.
-
-Causa corregida: `ListInstanceAgentCommands` expone el ID como `instance-agent-command-id`; leer `.id` producía la cadena `null`. No existe evidencia de un fallo IAM en este incidente.
-
 ### Recuperación V3
 
 - RUN_ID=`29831821481`
@@ -85,9 +74,64 @@ Causa corregida: `ListInstanceAgentCommands` expone el ID como `instance-agent-c
 - COMMAND_CANCELED=`false`
 - PRODUCTION_CHANGED=`false`
 
-El comando exacto fue identificado por el SHA-256 registrado en el artifact original. Su execution summary indica `ACCEPTED` y `EXPIRED`. Oracle define `EXPIRED` como entrega expirada porque la instancia no solicitó el comando. Por lo tanto, el payload de inspección no está demostrado como ejecutado y el backend continúa sin inspeccionar.
+El comando exacto fue identificado por el SHA-256 registrado en el artifact original. `EXPIRED` demuestra que la instancia no retiró la orden antes de la expiración. El payload de inspección no está demostrado como ejecutado.
 
-Todas las etiquetas temporales de PR #29 fueron retiradas. No habrá reintento automático.
+## PR #30 — estado observado de Oracle Cloud Agent
+
+- STATUS=`OPEN_DRAFT`
+- BASE_SHA=`a2a866d3d1d34bde20ab9e869c2aa380058cebab`
+- HEAD_SHA=`38f47c3dae02393db3e79ed90cefe01b84c5e2d3`
+- CHANGED_FILES=`2`
+- BEHIND_BASE=`0`
+- MERGEABLE=`true`
+- RUN_ID=`29832880538`
+- JOB_ID=`88641716928`
+- RESULT=`SUCCESS`
+- ARTIFACT_ID=`8496047189`
+- ARTIFACT_DIGEST=`sha256:5df29ec7a6fc145107fba364683ee367ff1e0a8f8b22270fc9573a9c001ef8fb`
+- ARTIFACT_CHECKSUMS=`6/6_VALID`
+- INSTANCE_LIFECYCLE=`RUNNING`
+- AGENT_CONFIG_PRESENT=`true`
+- ALL_PLUGINS_DISABLED=`false`
+- MANAGEMENT_DISABLED=`false`
+- RUN_COMMAND_DESIRED_STATE=`DEFAULT`
+- OBSERVED_PLUGIN_TOTAL=`11`
+- RUN_COMMAND_OBSERVED_MATCHES=`0`
+- CLASSIFICATION=`BLOCKED_PLUGIN_MISSING`
+- COMMAND_API_USED=`false`
+- PRODUCTION_CHANGED=`false`
+
+La configuración no deshabilita plugins ni management. El plugin Compute Instance Run Command no aparece en el conjunto observado de la instancia.
+
+## PR #31 — compatibilidad de imagen y catálogo de plugins
+
+- STATUS=`OPEN_DRAFT`
+- BASE_SHA=`38f47c3dae02393db3e79ed90cefe01b84c5e2d3`
+- HEAD_SHA=`7cffe43e457b91ade200268cf43c782d127ecb1b`
+- CHANGED_FILES=`2`
+- BEHIND_BASE=`0`
+- MERGEABLE=`true`
+- RUN_ID=`29833641694`
+- JOB_ID=`88644319715`
+- RESULT=`SUCCESS`
+- ARTIFACT_ID=`8496368042`
+- ARTIFACT_DIGEST=`sha256:a12ae8ff9aee9436a4cc811a8f27cc3aee3fecaa4fbacbc7a0db028a694125af`
+- ARTIFACT_CHECKSUMS=`6/6_VALID`
+- OPERATING_SYSTEM=`Canonical Ubuntu`
+- OPERATING_SYSTEM_VERSION=`22.04`
+- IMAGE_PRE_OCTOBER_2020=`false`
+- IMAGE_AGE_BUCKET=`LT_1Y`
+- AVAILABLE_PLUGIN_TOTAL=`11`
+- RUN_COMMAND_AVAILABLE_MATCHES=`0`
+- OBSERVED_PLUGIN_TOTAL=`11`
+- RUN_COMMAND_OBSERVED_MATCHES=`0`
+- CLASSIFICATION=`BLOCKED_PLATFORM_PLUGIN_NOT_LISTED`
+- COMMAND_API_USED=`false`
+- PRODUCTION_CHANGED=`false`
+
+La imagen es reciente y no entra en el caso documentado de imágenes anteriores a octubre de 2020. Run Command no aparece ni en el catálogo de plugins devuelto para la imagen ni en el conjunto observado de la instancia. Esto no prueba que Ubuntu 22.04 sea incompatible de forma general; prueba un gap de imagen, instalación o catálogo en esta instancia.
+
+Todas las etiquetas temporales de PR #29, PR #30 y PR #31 fueron retiradas. No hubo reintento automático ni segunda orden remota.
 
 ## Producción preservada
 
@@ -101,27 +145,27 @@ Revalidar antes de cualquier promoción.
 
 ## Bloqueos vigentes
 
-- El plugin Run Command de Oracle Cloud Agent no retiró la operación existente antes de expirar.
+- Compute Instance Run Command no está disponible en la instalación observada de Oracle Cloud Agent.
 - Backend hunter no verificado.
-- Persistencia, imagen activa, release SHA y rollback no inspeccionados.
+- Persistencia, imagen activa del contenedor, release SHA y rollback no inspeccionados.
 - Preview no promocionable.
 - SHA productivo indeterminado.
-- PR #25 y PR #29 permanecen Draft.
+- PR #25, PR #29, PR #30 y PR #31 permanecen Draft o abiertos según lo indicado.
 
 ## Decisión operativa
 
-- No crear un segundo comando automáticamente.
-- No reejecutar PR #28 ni PR #29.
+- No crear otro Run Command automáticamente.
+- No habilitar, instalar, actualizar ni reiniciar Oracle Cloud Agent sin autorización de mutación.
 - No mergear, desplegar ni promover.
-- Siguiente diagnóstico permitido: estado read-only del plugin Run Command y salud de Oracle Cloud Agent, sin comandos remotos.
+- La siguiente acción requiere acceso al host para inspeccionar versión/paquete/logs del agente o aplicar una reparación controlada con rollback.
 
 ## Estado documental
 
 - HANDOFF_BRANCH=`docs/boqa-handoff-pr25-reconstructed`
 - VERSIONED_HANDOFF_RECONCILED=`true`
-- CANONICAL_DRIVE_SYNC=`COMPLETE`
-- DOCUMENTED_PR29_HEAD=`a2a866d3d1d34bde20ab9e869c2aa380058cebab`
+- CANONICAL_DRIVE_SYNC=`PENDING_PLUGIN_DIAGNOSTIC_UPDATE`
+- DOCUMENTED_PR31_HEAD=`7cffe43e457b91ade200268cf43c782d127ecb1b`
 
 ## Siguiente acción exacta
 
-Crear y ejecutar un diagnóstico read-only del plugin Run Command de Oracle Cloud Agent para determinar por qué la entrega quedó `EXPIRED`, sin crear ni cancelar comandos.
+Obtener autorización explícita para una intervención controlada en la instancia: inspeccionar localmente Oracle Cloud Agent y, sólo si corresponde, instalar/actualizar o habilitar el plugin Run Command con respaldo, evidencia y rollback.
