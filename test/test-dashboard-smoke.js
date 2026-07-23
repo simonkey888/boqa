@@ -34,6 +34,8 @@ assert.match(app, /Release completa:/, 'complete release SHA must remain accessi
 assert.match(css, /@keyframes hunt-sweep/, 'live trace must include the lightweight sweep animation');
 assert.match(css, /prefers-reduced-motion:reduce/, 'live trace must respect reduced-motion preferences');
 assert.match(mobileCss, /grid-template-columns:\s*repeat\(2/, 'mobile sources and secondary panels must compact into two columns');
+assert.match(mobileCss, /\.status-grid\s*>\s*#runtime-panel,\s*\.status-grid\s*>\s*#health-panel\s*\{\s*grid-column:\s*1\s*\/\s*-1;/s, 'mobile primary panels must use semantic selectors');
+assert.doesNotMatch(mobileCss, /\.status-grid\s*>\s*\.panel:nth-child\(-n\s*\+\s*2\)/, 'mobile layout must not depend on lab-panel child position');
 assert.match(mobileCss, /max-width:\s*340px/, 'narrow-device fallback must remain single-column');
 assert.doesNotMatch(css + mobileCss, /@import|https?:\/\//i, 'dashboard CSS must not load remote fonts or visual dependencies');
 assert.match(state, /LOADING/);
