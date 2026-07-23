@@ -3,6 +3,17 @@
  * No demo data is generated at the edge.
  */
 
+// BOQA_SAFE_LAB_PREVIEW_BUILD_START
+const SAFE_LAB_PREVIEW_BUILD = Object.freeze({
+  enabled: false,
+  source_sha: null,
+  contract_checksum: null,
+  promotion_ready: false,
+  promotion_blocker: null,
+  contract: null,
+});
+// BOQA_SAFE_LAB_PREVIEW_BUILD_END
+
 async function computeHmacSignature(secret, method, path, ts, bodyStr) {
   const payload = method.toUpperCase() + path + String(ts) + bodyStr;
   const encoder = new TextEncoder();
@@ -85,6 +96,25 @@ function hiddenPrivateResponse(pathname) {
     return jsonResponse({ error: 'not_found' }, 404, headers);
   }
   return new Response('Not Found', { status: 404, headers });
+}
+
+function getSafeLabPreviewBuild() {
+  const build = SAFE_LAB_PREVIEW_BUILD;
+  if (!build || build.enabled !== true) return null;
+  if (build.promotion_ready !== false || build.promotion_blocker !== 'CONTROLLED_LAB_PREVIEW') return null;
+  if (!build.contract || build.contract.environment !== 'controlled_lab' || build.contract.reportable !== false) return null;
+  if (build.contract.hunter_state !== 'LAB_COMPLETE' || build.contract.source_sha !== build.source_sha) return null;
+  if (!/^sha256:[a-f0-9]{64}$/.test(String(build.contract_checksum || ''))) return null;
+  return build;
+}
+
+function safeLabUnavailableResponse() {
+  return jsonResponse({
+    error: 'safe_lab_contract_unavailable',
+    environment: 'controlled_lab',
+    status: 'UNAVAILABLE',
+    reportable: false,
+  }, 503);
 }
 
 function isAllowedApiRequest(request, pathname) {
@@ -184,6 +214,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const backendConfigured = Boolean(env && env.BOQA_BACKEND_URL);
+    const safeLabBuild = getSafeLabPreviewBuild();
 
     if (isPrivateSurface(url.pathname)) {
       return hiddenPrivateResponse(url.pathname);
@@ -192,6 +223,10 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       const allowed = isAllowedApiRequest(request, url.pathname);
       if (!allowed) return jsonResponse({ error: 'not_found' }, 404);
+      if (url.pathname === '/api/hunter/status' && SAFE_LAB_PREVIEW_BUILD.enabled === true) {
+        if (!safeLabBuild) return safeLabUnavailableResponse();
+        return jsonResponse(safeLabBuild.contract);
+      }
       if (!backendConfigured) return failClosedApi(url.pathname);
       return proxyToBackend(request, env);
     }
@@ -202,6 +237,20 @@ export default {
     }
 
     if (url.pathname === '/health') {
+      if (SAFE_LAB_PREVIEW_BUILD.enabled === true) {
+        if (!safeLabBuild) return safeLabUnavailableResponse();
+        return jsonResponse({
+          status: 'ok',
+          worker: 'boqa',
+          mode: 'controlled_lab_preview',
+          backend_configured: backendConfigured,
+          source_sha: safeLabBuild.source_sha,
+          contract_checksum: safeLabBuild.contract_checksum,
+          promotion_ready: false,
+          promotion_blocker: 'CONTROLLED_LAB_PREVIEW',
+          timestamp: new Date().toISOString(),
+        });
+      }
       return jsonResponse({
         status: 'ok',
         worker: 'boqa',
