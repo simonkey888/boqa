@@ -1,0 +1,121 @@
+name: BOQA Apply Dashboard Checkpoint — Staging Only
+
+on:
+  push:
+    branches:
+      - staging/boqa-dashboard-checkpoint-v1
+
+permissions:
+  contents: write
+
+concurrency:
+  group: boqa-dashboard-checkpoint-staging
+  cancel-in-progress: false
+
+jobs:
+  apply-checkpoint:
+    if: github.ref == 'refs/heads/staging/boqa-dashboard-checkpoint-v1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      TARGET_BRANCH: feat/boqa-safe-lab-hunter-contract-v1
+      EXPECTED_TARGET_HEAD: 895e07360efbbf281f4a52780cf8f20955616235
+      EXPECTED_PATCH_BLOB: b263dc6e8986e1efe285eb0f35e90e298016d31f
+      EXPECTED_PATCH_SHA256: 2d12beba26865fcbf9dfa1b4f586b4699df23dcdea2787d500c15de020874859
+    steps:
+      - name: Checkout staging payload
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          path: staging
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify staging payload identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd staging
+          test "$(git hash-object .boqa-staging/dashboard.patch.gz)" = "$EXPECTED_PATCH_BLOB"
+          test "$(sha256sum .boqa-staging/dashboard.patch.gz | awk '{print $1}')" = "$EXPECTED_PATCH_SHA256"
+
+      - name: Checkout exact implementation head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.TARGET_BRANCH }}
+          path: target
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Apply and validate atomic checkpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd target
+          test "$(git rev-parse HEAD)" = "$EXPECTED_TARGET_HEAD"
+          remote_head="$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
+          test "$remote_head" = "$EXPECTED_TARGET_HEAD"
+          cp ../staging/.boqa-staging/dashboard.patch.gz ../dashboard.patch.gz
+          gzip -dc ../dashboard.patch.gz > ../dashboard.patch
+          git apply --check ../dashboard.patch
+          git apply ../dashboard.patch
+          git diff --check
+
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(
+            dashboard/app.js
+            dashboard/dashboard-state.js
+            dashboard/index.html
+            dashboard/mobile.css
+            dashboard/style.css
+            lib/safe-lab-hunter-contract-v1.js
+            schemas/safe-lab-hunter-contract-v1.schema.json
+            scripts/build-safe-lab-preview-bundle.js
+            test/test-dashboard-smoke.js
+            test/test-dashboard-state.js
+            test/test-safe-lab-hunter-contract-v1.js
+            test/test-safe-lab-worker-preview-v1.js
+            worker.js
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          test "${#changed[@]}" -eq "${#expected_sorted[@]}"
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${changed[@]}")
+
+          while IFS= read -r file; do
+            if [ "$file" = "./worker.js" ]; then
+              node --input-type=module --check < "$file"
+            else
+              node --check "$file"
+            fi
+          done < <(find dashboard lib scripts test -type f -name '*.js' -print | sort; printf '%s\n' './worker.js')
+
+          node test/test-safe-lab-hunter-contract-v1.js
+          node test/test-safe-lab-worker-preview-v1.js
+          node test/test-dashboard-state.js
+          node test/test-dashboard-smoke.js
+          node test/test-public-private-boundary.js
+          node test/test-worker-dashboard-contract.js
+
+          if git diff -- . ':!package-lock.json' | grep -E '(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{20,})'; then
+            echo 'SECRET_SCAN=FAIL'
+            exit 1
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${expected[@]}"
+          test -z "$(git status --short | grep -v '^M\|^A' || true)"
+          git commit -m 'feat(dashboard): render self-expiring controlled-lab evidence'
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_TARGET_HEAD"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+
+          {
+            echo 'PHASE=DASHBOARD_LAB_CHECKPOINT'
+            echo "PARENT_SHA=$EXPECTED_TARGET_HEAD"
+            echo "COMMIT_SHA=$(git rev-parse HEAD)"
+            echo "TREE_SHA=$(git rev-parse HEAD^{tree})"
+            echo 'FOCAL_TESTS=PASS'
+            echo 'SECRET_SCAN=PASS'
+            echo 'DIFF_CHECK=PASS'
+            echo 'PRODUCTION_CHANGED=false'
+          } >> "$GITHUB_STEP_SUMMARY"
