@@ -1,0 +1,17 @@
+name: BOQA Materialize Audit Remediation — Staging Only
+
+on:
+  pull_request:
+    branches:
+      - feat/boqa-safe-lab-hunter-contract-v1
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.head_ref == 'staging/boqa-audit-remediation-v1'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo staging
