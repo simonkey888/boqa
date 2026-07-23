@@ -9,9 +9,142 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: boqa-audit-remediation-materialization
+  cancel-in-progress: false
+
 jobs:
   materialize:
     if: github.head_ref == 'staging/boqa-audit-remediation-v1'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      AUDITED_PARENT: 8b0ffbaffe93595e630768cf866f502e5968cad2
+      EXPECTED_PAYLOAD_SHA256: 944ac2d4f7983e132e08f1129a20f20fc38ef23fab6a70ae77f4f034e719b8b0
+      EXPECTED_FINAL_TREE: 86711dfc829c5182ca74b3493611c5d301620dbb
     steps:
-      - run: echo staging
+      - name: Checkout exact staging head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Authenticate and extract remediation payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "$AUDITED_PARENT"
+          test "$(find .boqa-staging/remediation -maxdepth 1 -type f -name 'chunk-*' | wc -l)" -eq 13
+          echo '4689a9640769b95b7bd7a39944435125a168ca37328410be85b2e39dedf5cd6d  .boqa-staging/remediation/chunk-000' | sha256sum -c -
+          echo '840e4c974646d699d9b68c948ea5be5a3f06988784db66e65e218b47b831dad4  .boqa-staging/remediation/chunk-001' | sha256sum -c -
+          echo '34cfb5a57e6eced09ca9273c4c2edb0ffb491cc04e0e8eb8d1f3119db48d973b  .boqa-staging/remediation/chunk-002' | sha256sum -c -
+          echo '1eacf3487e4e131b0f337d282d1cf4eb6b7b42eca5dd1c2abe6e35a20846b157  .boqa-staging/remediation/chunk-003' | sha256sum -c -
+          echo '2899ef4e0876bb2e6e12c1bfd8a4f170b04dda1333a6331b135d2fe6168259c5  .boqa-staging/remediation/chunk-004' | sha256sum -c -
+          echo 'da8e3591d2b93b6222347d477ac575248de1b666827c8340fd38efc304f96fe4  .boqa-staging/remediation/chunk-005' | sha256sum -c -
+          echo '96ee0cc8905be477094386f28170dfd35e7fa7903f980cef18cc41db50891624  .boqa-staging/remediation/chunk-006' | sha256sum -c -
+          echo 'b14ee28ca72a6f99024e88a540a9a894daa8adac2d2594c20e4505fae17c1159  .boqa-staging/remediation/chunk-007' | sha256sum -c -
+          echo '125b2b2f818bebdba60cfa9369b851e9e57af9e0650811d5d37dfb32451af1e1  .boqa-staging/remediation/chunk-008' | sha256sum -c -
+          echo '548ebfca688c99bb04c1d923d828ae5755617b9b6be6c566dfc27ced5cd257dc  .boqa-staging/remediation/chunk-009' | sha256sum -c -
+          echo '32a8a30018e4690dcb3e7364860d6af186af8e718aaddae26f24fe7f4e2abf6d  .boqa-staging/remediation/chunk-010' | sha256sum -c -
+          echo '45c8f35e6db1fb735fe20f87f9d761e0a6b6906f02ea711661c641702a551434  .boqa-staging/remediation/chunk-011' | sha256sum -c -
+          echo '923401bbe7db0f05bb8e507ce7d8661162bce5370b2d27fc3356685bd91d5a93  .boqa-staging/remediation/chunk-012' | sha256sum -c -
+          cat .boqa-staging/remediation/chunk-* > /tmp/remediation.tar.gz
+          test "$(sha256sum /tmp/remediation.tar.gz | awk '{print $1}')" = "$EXPECTED_PAYLOAD_SHA256"
+          tar -tzf /tmp/remediation.tar.gz | sort > /tmp/payload-files.txt
+          cat > /tmp/expected-payload-files.txt <<'EOF'
+          dashboard/app.js
+          dashboard/dashboard-state.js
+          dashboard/index.html
+          dashboard/mobile.css
+          dashboard/style.css
+          lib/safe-lab-hunter-contract-v1.js
+          schemas/safe-lab-hunter-contract-v1.schema.json
+          scripts/build-safe-lab-preview-bundle.js
+          scripts/generate-safe-lab-contract.js
+          test/test-dashboard-smoke.js
+          test/test-dashboard-state.js
+          test/test-safe-lab-hunter-contract-v1.js
+          test/test-safe-lab-worker-preview-v1.js
+          worker.js
+          EOF
+          sort /tmp/expected-payload-files.txt -o /tmp/expected-payload-files.txt
+          diff -u /tmp/expected-payload-files.txt /tmp/payload-files.txt
+          tar -xzf /tmp/remediation.tar.gz
+          rm -rf .boqa-staging
+          rm -f .github/workflows/boqa-materialize-audit-remediation.yml
+          rm -f .github/workflows/boqa-source-snapshot.yml
+
+      - name: Validate exact remediation tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check "$AUDITED_PARENT"
+          mapfile -t changed < <(git diff --name-only "$AUDITED_PARENT" | sort)
+          expected=(
+            .github/workflows/boqa-source-snapshot.yml
+            dashboard/app.js
+            dashboard/dashboard-state.js
+            dashboard/index.html
+            dashboard/mobile.css
+            dashboard/style.css
+            lib/safe-lab-hunter-contract-v1.js
+            schemas/safe-lab-hunter-contract-v1.schema.json
+            scripts/build-safe-lab-preview-bundle.js
+            scripts/generate-safe-lab-contract.js
+            test/test-dashboard-smoke.js
+            test/test-dashboard-state.js
+            test/test-safe-lab-hunter-contract-v1.js
+            test/test-safe-lab-worker-preview-v1.js
+            worker.js
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          test "${#changed[@]}" -eq "${#expected_sorted[@]}"
+          diff -u <(printf '%s\n' "${expected_sorted[@]}") <(printf '%s\n' "${changed[@]}")
+          while IFS= read -r file; do
+            if [ "$file" = "worker.js" ]; then node --input-type=module --check < "$file"; else node --check "$file"; fi
+          done < <(find dashboard lib scripts test -type f -name '*.js' -print | sort; printf '%s\n' worker.js)
+          node test/test-safe-lab-hunter-contract-v1.js
+          node test/test-safe-lab-worker-preview-v1.js
+          node test/test-dashboard-state.js
+          node test/test-dashboard-smoke.js
+          node test/test-public-private-boundary.js
+          node test/test-worker-dashboard-contract.js
+          if git diff "$AUDITED_PARENT" -- . ':!package-lock.json' | grep -E '(BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{20,})'; then
+            echo 'SECRET_SCAN=FAIL'
+            exit 1
+          fi
+
+      - name: Install reproducibly and run full suite
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+
+      - name: Commit materialized tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'chore(staging): materialize audited remediation tree'
+          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_FINAL_TREE"
+          git push origin "HEAD:refs/heads/${{ github.head_ref }}"
+          {
+            echo 'PHASE=AUDIT_REMEDIATION_MATERIALIZATION'
+            echo "AUDITED_PARENT=$AUDITED_PARENT"
+            echo "MATERIALIZED_COMMIT=$(git rev-parse HEAD)"
+            echo "TREE_SHA=$(git rev-parse HEAD^{tree})"
+            echo 'FOCAL_TESTS=PASS'
+            echo 'FULL_SUITE=PASS'
+            echo 'SECRET_SCAN=PASS'
+            echo 'DIFF_CHECK=PASS'
+            echo 'PRODUCTION_CHANGED=false'
+          } >> "$GITHUB_STEP_SUMMARY"
