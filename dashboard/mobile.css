@@ -64,7 +64,8 @@
     gap: 8px;
   }
 
-  .status-grid > .panel:nth-child(-n + 2) {
+  .status-grid > #runtime-panel,
+  .status-grid > #health-panel {
     grid-column: 1 / -1;
   }
 
@@ -121,7 +122,8 @@
     grid-template-columns: 1fr;
   }
 
-  .status-grid > .panel:nth-child(-n + 2) {
+  .status-grid > #runtime-panel,
+  .status-grid > #health-panel {
     grid-column: auto;
   }
 
