@@ -1,323 +1,141 @@
 'use strict';
-
 const assert = require('assert');
-const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const {
-  EXISTING_DASHBOARD_FRESH_MS,
   canonicalJson,
   generateSafeLabHunterContract,
+  validateClosedContract,
 } = require('../lib/safe-lab-hunter-contract-v1');
+const {
+  computeEvidenceSha256,
+  finalizeRoundEvidence,
+} = require('../lib/soak-qualification-helpers');
 
-const SOURCE_SHA = 'a'.repeat(40);
-const BASE_NOW = Date.parse('2026-07-23T03:00:00.000Z');
+const HEAD = 'a'.repeat(40);
+const MERGE = 'b'.repeat(40);
+const TREE = 'c'.repeat(40);
+const RUN = '123456789';
+const NOW = Date.parse('2026-07-23T03:01:00.000Z');
+const IMAGE_DIGEST = `sha256:${'d'.repeat(64)}`;
+const IMAGE = `bkimminich/juice-shop@${IMAGE_DIGEST}`;
 let passed = 0;
+const sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
+const jsonWrite = (p, value) => fs.writeFileSync(p, `${JSON.stringify(value, null, 2)}\n`);
 
-function sha256(value) {
-  return crypto.createHash('sha256').update(value).digest('hex');
+function compose() {
+  const service = (image, user) => ({ image, user, read_only: true, cap_drop: ['ALL'], security_opt: ['no-new-privileges:true'], networks: { boqa_lab_internal: null }, volumes: [] });
+  return { name: 'boqa-lab', networks: { boqa_lab_internal: { internal: true } }, services: { candidate: service(IMAGE, '65532:65532'), control: service('node:20-slim@sha256:' + 'e'.repeat(64), '1000:1000'), driver: service('node:20-slim@sha256:' + 'e'.repeat(64), '1000:1000') }, volumes: {} };
 }
 
-function writeJson(root, relative, value) {
-  const file = path.join(root, relative);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
-}
-
-function baseEvidence() {
-  const gateStarted = '2026-07-23T02:59:50.000Z';
-  const started = '2026-07-23T02:59:51.000Z';
-  const finished = '2026-07-23T02:59:52.000Z';
-  const qualificationCompleted = '2026-07-23T02:59:53.000Z';
-  const gateCompleted = '2026-07-23T02:59:54.000Z';
-  const round = {
-    lab_id: 'juice-shop-v1',
-    run_id: 'r01-controlled',
-    manifest_digest: 'b'.repeat(64),
-    image_digest: `sha256:${'c'.repeat(64)}`,
-    control_digest: 'd'.repeat(64),
-    source_digest: 'e'.repeat(64),
-    scenario_family: 'INERT_DIFFERENTIAL_SEARCH_VALIDATION',
-    request_count: 4,
-    result: { vulnerable: 'LAB_FINDING_CONFIRMED', control: 'LAB_CONTROL_CLEAN' },
-    request_budget_verified: true,
-    policy_status: 'AUTHORIZED',
-    environment: 'controlled_lab',
-    reportability: 'not_reportable',
-    external_target: false,
-    started_at: started,
-    completed_at: finished,
-    duration_ms: 1000,
-    runtime_identity: { uid: 1000, gid: 1000, hostname: 'private-container-host', node: 'v20.20.2' },
-    runtime_evidence_sha256: 'f'.repeat(64),
-    egress: {
-      dns: { classification: 'BLOCKED_DNS', code: 'EAI_AGAIN' },
-      metadata: { classification: 'BLOCKED_CONNECT', code: 'ENETUNREACH' },
-      documentation_ip: { classification: 'BLOCKED_CONNECT', code: 'ENETUNREACH' },
-    },
-    evidence_stage: 'final',
-    driver_evidence: { file: 'driver-round-r01-controlled.json', file_sha256: '1'.repeat(64), payload_sha256: '2'.repeat(64) },
-    driver_evidence_sha256: '2'.repeat(64),
-    driver_file_sha256: '1'.repeat(64),
-    pre_run_residue_state: { containers: [], networks: [], volumes: [] },
-    post_run_residue_state: { containers: [], networks: [], volumes: [] },
-    cleanup_verified: true,
-    cleanup_inventory: { containers: [], networks: [], volumes: [] },
-    cleanup_error: null,
-    container_identities: {
-      candidate: { id: 'private-container-id', name: 'private-container-name' },
-      control: { id: 'private-control-id', name: 'private-control-name' },
-      driver: { id: 'private-driver-id', name: 'private-driver-name' },
-    },
-    source: {
-      head_sha: SOURCE_SHA,
-      merge_sha: '3'.repeat(40),
-      tree_sha: '4'.repeat(40),
-      workflow_run_id: '123456',
-      workflow_run_attempt: '1',
-      workflow_name: 'BOQA Real Docker Qualification Gate V1',
-      workflow_job: 'qualification',
-      repository: 'simonkey888/boqa',
-    },
-    orchestrator_timing: { started_at: gateStarted, completed_at: qualificationCompleted, duration_ms: 3000 },
-    final_classification: 'LAB_ROUND_CONFIRMED',
-    evidence_sha256: '5'.repeat(64),
+function baseDriver() {
+  const value = {
+    lab_id: 'juice-shop-v1', run_id: 'r01-test1234', manifest_digest: '1'.repeat(64), image_digest: IMAGE_DIGEST,
+    control_digest: '2'.repeat(64), source_digest: '3'.repeat(64), scenario_family: 'INERT_DIFFERENTIAL_SEARCH_VALIDATION',
+    request_count: 4, result: { vulnerable: 'LAB_FINDING_CONFIRMED', control: 'LAB_CONTROL_CLEAN' }, request_budget_verified: true,
+    policy_status: 'AUTHORIZED', environment: 'controlled_lab', reportability: 'not_reportable', external_target: false,
+    started_at: '2026-07-23T03:00:10.000Z', completed_at: '2026-07-23T03:00:11.000Z', duration_ms: 1000,
+    runtime_identity: { uid: 1000, gid: 1000, hostname: 'synthetic-container', node: 'v20.0.0' }, runtime_evidence_sha256: '4'.repeat(64),
+    egress: { dns: { classification: 'BLOCKED_DNS' }, metadata: { classification: 'BLOCKED_CONNECT' }, documentation_ip: { classification: 'BLOCKED_TIMEOUT' } },
   };
-  return {
-    qualification: {
-      schema_version: 1,
-      candidate_head_sha: SOURCE_SHA,
-      candidate_merge_sha: '3'.repeat(40),
-      source_tree_sha: '4'.repeat(40),
-      workflow_run_id: '123456',
-      image_digest_match: true,
-      config_digest_match: true,
-      configured_runtime_user: '65532',
-      driver_runtime_user: '1000:1000',
-      internal_network: true,
-      host_ports: 0,
-      docker_socket: 0,
-      privileged: false,
-      capabilities: 'dropped',
-      read_only_runtime: true,
-      runtime_egress: 'blocked',
-      unauthorized_connections: 0,
-      rounds_requested: 1,
-      rounds_completed: 1,
-      vulnerable_confirmed: 1,
-      controls_clean: 1,
-      false_positives: 0,
-      false_negatives: 0,
-      cleanup_failures: 0,
-      evidence_pairs_verified: true,
-      evidence_integrity: 'valid',
-      production_accessed: false,
-      deploy_performed: false,
-      completed_at: qualificationCompleted,
-    },
-    summary: {
-      rounds_requested: 1,
-      rounds_completed: 1,
-      vulnerable_confirmed: 1,
-      controls_clean: 1,
-      false_positives: 0,
-      false_negatives: 0,
-      cleanup_failures: 0,
-    },
-    gateStatus: {
-      schema_version: 1,
-      qualification_green: true,
-      mode: 'short',
-      head_sha: SOURCE_SHA,
-      merge_sha: '3'.repeat(40),
-      tree_sha: '4'.repeat(40),
-      workflow_run_id: '123456',
-      project: 'boqa-lab-redacted',
-      run_dir: 'output/soak/redacted',
-      started_at: gateStarted,
-      gates: { pre_run_clean: 'PASS', compose_policy: 'PASS', round_assertions: 'PASS', evidence_pairs: 'PASS', cleanup: 'PASS', egress: 'PASS', final: 'PASS' },
-      completed_at: gateCompleted,
-    },
-    round,
-  };
+  value.evidence_sha256 = computeEvidenceSha256(value);
+  return value;
 }
 
-function materialize(mutator = null) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'boqa-safe-lab-contract-'));
-  const state = baseEvidence();
-  if (mutator) mutator(state);
-  writeJson(root, 'compose-normalized.json', { services: { candidate: {}, control: {}, driver: {} }, networks: { internal: true } });
-  writeJson(root, 'evidence-files.json', { driver_files: ['driver-round-r01-controlled.json'], final_files: ['final-round-r01-controlled.json'] });
-  writeJson(root, 'gate-status.json', state.gateStatus);
-  writeJson(root, 'materialized-image.json', { manifest_match: true, config_match: true, configured_user: '65532' });
-  writeJson(root, 'qualification-manifest.json', state.qualification);
-  writeJson(root, 'round-results.json', [state.round]);
-  writeJson(root, 'soak-summary.json', state.summary);
-  writeJson(root, 'final-round-r01-controlled.json', state.round);
-  writeJson(root, 'driver/driver-round-r01-controlled.json', { result: state.round.result, environment: state.round.environment, reportability: state.round.reportability });
-  refreshChecksums(root);
-  return { root, state };
-}
-
-function refreshChecksums(root) {
-  const files = [];
-  function walk(dir, prefix = '') {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (relative === 'SHA256SUMS') continue;
-      const absolute = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(absolute, relative);
-      else files.push(relative);
-    }
-  }
-  walk(root);
-  const lines = files.sort().map((relative) => `${sha256(fs.readFileSync(path.join(root, relative)))}  ${relative}`);
-  fs.writeFileSync(path.join(root, 'SHA256SUMS'), `${lines.join('\n')}\n`);
-}
-
-function regenerateFiles(fixture) {
-  writeJson(fixture.root, 'qualification-manifest.json', fixture.state.qualification);
-  writeJson(fixture.root, 'soak-summary.json', fixture.state.summary);
-  writeJson(fixture.root, 'gate-status.json', fixture.state.gateStatus);
-  writeJson(fixture.root, 'round-results.json', [fixture.state.round]);
-  writeJson(fixture.root, 'final-round-r01-controlled.json', fixture.state.round);
-  writeJson(fixture.root, 'driver/driver-round-r01-controlled.json', { result: fixture.state.round.result, environment: fixture.state.round.environment, reportability: fixture.state.round.reportability });
-  refreshChecksums(fixture.root);
-}
-
-function generate(fixture, options = {}) {
-  return generateSafeLabHunterContract({
-    evidenceDir: fixture.root,
-    expectedSourceSha: options.sourceSha || SOURCE_SHA,
-    nowMs: options.nowMs ?? BASE_NOW,
+function fixture() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'boqa-contract-'));
+  fs.mkdirSync(path.join(dir, 'driver'));
+  const driver = baseDriver();
+  const driverName = `driver-round-${driver.run_id}.json`;
+  const driverPath = path.join(dir, 'driver', driverName);
+  jsonWrite(driverPath, driver);
+  const driverFileSha = sha256(fs.readFileSync(driverPath));
+  const final = finalizeRoundEvidence(driver, {
+    driverFile: driverName, driverFileSha256: driverFileSha,
+    preState: { containers: [], networks: [], volumes: [] }, cleanupState: { containers: [], networks: [], volumes: [] },
+    cleanupVerified: true, containerIdentities: { candidate: { synthetic: true }, control: { synthetic: true }, driver: { synthetic: true } },
+    source: { head_sha: HEAD, merge_sha: MERGE, tree_sha: TREE, workflow_run_id: RUN, workflow_run_attempt: '1', workflow_name: 'BOQA Real Docker Qualification Gate V1', workflow_job: 'qualification', repository: 'simonkey888/boqa' },
+    timing: { started_at: '2026-07-23T03:00:00.000Z', completed_at: '2026-07-23T03:00:12.000Z', duration_ms: 12000 },
   });
+  const finalName = `final-round-${driver.run_id}.json`;
+  const qualification = {
+    schema_version: 1, candidate_head_sha: HEAD, candidate_merge_sha: MERGE, source_tree_sha: TREE, workflow_run_id: RUN,
+    image_digest_match: true, config_digest_match: true, configured_runtime_user: '65532', driver_runtime_user: '1000:1000',
+    internal_network: true, host_ports: 0, docker_socket: 0, privileged: false, capabilities: 'dropped', read_only_runtime: true,
+    runtime_egress: 'blocked', unauthorized_connections: 0, rounds_requested: 1, rounds_completed: 1, vulnerable_confirmed: 1,
+    controls_clean: 1, false_positives: 0, false_negatives: 0, cleanup_failures: 0, evidence_pairs_verified: true,
+    evidence_integrity: 'valid', production_accessed: false, deploy_performed: false, completed_at: '2026-07-23T03:00:13.000Z',
+  };
+  const gate = { schema_version: 1, qualification_green: true, mode: 'short', head_sha: HEAD, merge_sha: MERGE, tree_sha: TREE, workflow_run_id: RUN, project: 'boqa-lab', run_dir: 'output/soak/synthetic', started_at: '2026-07-23T03:00:00.000Z', gates: { pre_run_clean: 'PASS', oci_identity: 'PASS', compose_policy: 'PASS', round_assertions: 'PASS', evidence_pairs: 'PASS', cleanup: 'PASS', egress: 'PASS', final: 'PASS' }, completed_at: '2026-07-23T03:00:14.000Z' };
+  const files = {
+    'compose-normalized.json': compose(),
+    'evidence-files.json': { driver_files: [driverName], final_files: [finalName] },
+    'gate-status.json': gate,
+    'materialized-image.json': { repo_digests: [IMAGE], image_id: `sha256:${'f'.repeat(64)}`, architecture: 'amd64', os: 'linux', configured_user: '65532', manifest_match: true, config_match: true },
+    'qualification-manifest.json': qualification,
+    'round-results.json': [final],
+    'soak-summary.json': { rounds_requested: 1, rounds_completed: 1, vulnerable_confirmed: 1, controls_clean: 1, false_positives: 0, false_negatives: 0, cleanup_failures: 0 },
+    [finalName]: final,
+  };
+  for (const [name, value] of Object.entries(files)) jsonWrite(path.join(dir, name), value);
+  writeSums(dir);
+  return { dir, driverName, finalName };
 }
 
-function expectCode(code, fn) {
-  assert.throws(fn, (error) => error && error.code === code, `expected ${code}`);
+function writeSums(dir) {
+  const names = [];
+  (function walk(current, prefix = '') { for (const ent of fs.readdirSync(current, { withFileTypes: true })) { const rel = prefix ? `${prefix}/${ent.name}` : ent.name; if (rel === 'SHA256SUMS') continue; if (ent.isDirectory()) walk(path.join(current, ent.name), rel); else names.push(rel); } })(dir);
+  fs.writeFileSync(path.join(dir, 'SHA256SUMS'), names.sort().map((name) => `${sha256(fs.readFileSync(path.join(dir, name)))}  ${name}`).join('\n') + '\n');
 }
+function read(dir, name) { return JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8')); }
+function mutate(dir, name, fn) { const value = read(dir, name); fn(value); jsonWrite(path.join(dir, name), value); writeSums(dir); }
+function generate(dir, overrides = {}) { return generateSafeLabHunterContract({ evidenceDir: dir, expectedSourceSha: HEAD, expectedMergeSha: MERGE, expectedTreeSha: TREE, expectedWorkflowRunId: RUN, nowMs: NOW, ...overrides }); }
+function test(name, fn) { fn(); passed += 1; console.log(`ok ${passed} - ${name}`); }
+function rejects(name, fn, code) { test(name, () => assert.throws(fn, (e) => e.code === code || String(e.message).startsWith(code))); }
 
-function test(name, fn) {
-  fn();
-  passed += 1;
-  console.log(`ok ${passed} - ${name}`);
-}
+const valid = fixture();
+test('valid evidence generates closed canonical contract', () => { const a = generate(valid.dir); assert.equal(a.contract.environment, 'controlled_lab'); assert.equal(a.contract.reportable, false); assert.equal(a.contract.hunter_state, 'LAB_COMPLETE'); assert.equal('storage_valid' in a.contract, false); assert.equal(a.json, `${canonicalJson(a.contract)}\n`); });
+test('generation is deterministic', () => { assert.equal(generate(valid.dir).json, generate(valid.dir).json); });
 
-test('valid evidence produces closed FRESH one-shot contract', () => {
-  const fixture = materialize();
-  const generated = generate(fixture);
-  assert.equal(generated.contract.status, 'FRESH');
-  assert.equal(generated.contract.environment, 'controlled_lab');
-  assert.equal(generated.contract.reportable, false);
-  assert.equal(generated.contract.hunter_state, 'LAB_COMPLETE');
-  assert.equal(generated.contract.unavailable_after, '2026-07-24T02:59:54.000Z');
-  assert.ok(!generated.json.includes('ACTIVE'));
-  assert.match(generated.checksum, /^sha256:[a-f0-9]{64}$/);
-});
-
-test('incorrect checksum is rejected', () => {
-  const fixture = materialize();
-  fs.appendFileSync(path.join(fixture.root, 'soak-summary.json'), ' ');
-  expectCode('CHECKSUM_MISMATCH', () => generate(fixture));
-});
-
-test('missing file is rejected', () => {
-  const fixture = materialize();
-  fs.rmSync(path.join(fixture.root, 'materialized-image.json'));
-  expectCode('EVIDENCE_FILE_MISSING', () => generate(fixture));
-});
-
-test('extra file is rejected', () => {
-  const fixture = materialize();
-  fs.writeFileSync(path.join(fixture.root, 'unexpected.txt'), 'unexpected');
-  expectCode('EVIDENCE_FILE_EXTRA', () => generate(fixture));
-});
-
-test('source SHA mismatch is rejected', () => {
-  const fixture = materialize();
-  expectCode('SOURCE_SHA_MISMATCH', () => generate(fixture, { sourceSha: 'b'.repeat(40) }));
-});
-
-test('future evidence is rejected', () => {
-  const fixture = materialize();
-  expectCode('EVIDENCE_FROM_FUTURE', () => generate(fixture, { nowMs: Date.parse('2026-07-23T02:59:53.500Z') }));
-});
-
-test('stale evidence is labelled STALE using centralized injected clock', () => {
-  const fixture = materialize();
-  const nowMs = Date.parse(fixture.state.gateStatus.completed_at) + EXISTING_DASHBOARD_FRESH_MS + 1;
-  assert.equal(generate(fixture, { nowMs }).contract.status, 'STALE');
-});
-
-test('contaminated negative control is rejected', () => {
-  const fixture = materialize((state) => { state.round.result.control = 'INDETERMINATE'; });
-  expectCode('NEGATIVE_CONTROL_CONTAMINATED', () => generate(fixture));
-});
-
-test('false positives greater than zero are rejected', () => {
-  const fixture = materialize((state) => { state.qualification.false_positives = 1; state.summary.false_positives = 1; });
-  expectCode('FALSE_POSITIVES_NONZERO', () => generate(fixture));
-});
-
-test('false negatives greater than zero are rejected', () => {
-  const fixture = materialize((state) => { state.qualification.false_negatives = 1; state.summary.false_negatives = 1; });
-  expectCode('FALSE_NEGATIVES_NONZERO', () => generate(fixture));
-});
-
-test('unauthorized connections greater than zero are rejected', () => {
-  const fixture = materialize((state) => { state.qualification.unauthorized_connections = 1; });
-  expectCode('UNAUTHORIZED_CONNECTIONS_NONZERO', () => generate(fixture));
-});
-
-test('cleanup false is rejected', () => {
-  const fixture = materialize((state) => { state.round.cleanup_verified = false; });
-  expectCode('CLEANUP_NOT_VERIFIED', () => generate(fixture));
-});
-
-test('egress failure is rejected', () => {
-  const fixture = materialize((state) => { state.round.egress.dns.classification = 'ALLOWED'; });
-  expectCode('EGRESS_NOT_BLOCKED', () => generate(fixture));
-});
-
-test('reportable evidence is rejected', () => {
-  const fixture = materialize((state) => { state.round.reportability = 'reportable'; });
-  expectCode('REPORTABLE_EVIDENCE_FORBIDDEN', () => generate(fixture));
-});
-
-test('incorrect environment is rejected', () => {
-  const fixture = materialize((state) => { state.round.environment = 'production'; });
-  expectCode('ENVIRONMENT_INVALID', () => generate(fixture));
-});
-
-test('inconsistent timestamps are rejected', () => {
-  const fixture = materialize((state) => { state.round.started_at = '2026-07-23T02:59:55.000Z'; });
-  expectCode('TIMESTAMPS_INCONSISTENT', () => generate(fixture));
-});
-
-test('generation is deterministic for identical evidence and clock', () => {
-  const fixture = materialize();
-  const first = generate(fixture);
-  const second = generate(fixture);
-  assert.equal(first.json, second.json);
-  assert.equal(first.checksum, second.checksum);
-  assert.equal(canonicalJson(first.contract), canonicalJson(second.contract));
-});
-
-test('private raw fields never enter the public contract', () => {
-  const fixture = materialize();
-  const json = generate(fixture).json;
-  for (const forbidden of ['private-container-host', 'private-container-id', 'private-control-id', 'private-driver-id', 'container_identities', 'runtime_identity']) {
-    assert.ok(!json.includes(forbidden), forbidden);
-  }
-});
-
-test('unknown critical qualification field is rejected', () => {
-  const fixture = materialize();
-  fixture.state.qualification.target_url = 'https://forbidden.invalid';
-  regenerateFiles(fixture);
-  expectCode('UNKNOWN_CRITICAL_FIELD', () => generate(fixture));
-});
-
-assert.equal(passed, 19);
+function caseMutate(name, file, fn, code) { const f = fixture(); mutate(f.dir, file, fn); rejects(name, () => generate(f.dir), code); }
+const badChecksum = fixture(); fs.appendFileSync(path.join(badChecksum.dir, 'soak-summary.json'), ' '); rejects('checksum incorrect', () => generate(badChecksum.dir), 'CHECKSUM_MISMATCH');
+const missing = fixture(); fs.unlinkSync(path.join(missing.dir, 'soak-summary.json')); rejects('file missing', () => generate(missing.dir), 'EVIDENCE_FILE_MISSING');
+const extra = fixture(); fs.writeFileSync(path.join(extra.dir, 'extra.json'), '{}\n'); rejects('file extra', () => generate(extra.dir), 'EVIDENCE_FILE_EXTRA');
+rejects('source SHA mismatch', () => generate(valid.dir, { expectedSourceSha: '9'.repeat(40) }), 'SOURCE_SHA_MISMATCH');
+rejects('merge SHA mismatch', () => generate(valid.dir, { expectedMergeSha: '9'.repeat(40) }), 'MERGE_SHA_MISMATCH');
+rejects('tree SHA mismatch', () => generate(valid.dir, { expectedTreeSha: '9'.repeat(40) }), 'TREE_SHA_MISMATCH');
+rejects('workflow run mismatch', () => generate(valid.dir, { expectedWorkflowRunId: '999' }), 'WORKFLOW_RUN_MISMATCH');
+rejects('evidence future', () => generate(valid.dir, { nowMs: Date.parse('2026-07-23T02:59:00.000Z') }), 'EVIDENCE_FROM_FUTURE');
+test('evidence stale', () => assert.equal(generate(valid.dir, { nowMs: NOW + 100000 }).contract.status, 'STALE'));
+caseMutate('negative control contaminated', 'qualification-manifest.json', (v) => { v.controls_clean = 0; }, 'SUMMARY_MISMATCH');
+caseMutate('false positives nonzero', 'qualification-manifest.json', (v) => { v.false_positives = 1; }, 'SUMMARY_MISMATCH');
+caseMutate('false negatives nonzero', 'qualification-manifest.json', (v) => { v.false_negatives = 1; }, 'SUMMARY_MISMATCH');
+caseMutate('unauthorized connections nonzero', 'qualification-manifest.json', (v) => { v.unauthorized_connections = 1; }, 'UNAUTHORIZED_CONNECTIONS_NONZERO');
+caseMutate('cleanup false', 'qualification-manifest.json', (v) => { v.cleanup_failures = 1; }, 'SUMMARY_MISMATCH');
+caseMutate('egress failed', 'qualification-manifest.json', (v) => { v.runtime_egress = 'allowed'; }, 'EGRESS_NOT_BLOCKED');
+caseMutate('image digest mismatch', 'qualification-manifest.json', (v) => { v.image_digest_match = false; }, 'IMAGE_DIGEST_MISMATCH');
+caseMutate('config digest mismatch', 'qualification-manifest.json', (v) => { v.config_digest_match = false; }, 'CONFIG_DIGEST_MISMATCH');
+caseMutate('network not internal', 'qualification-manifest.json', (v) => { v.internal_network = false; }, 'NETWORK_NOT_INTERNAL');
+caseMutate('host port present', 'qualification-manifest.json', (v) => { v.host_ports = 1; }, 'HOST_PORT_PRESENT');
+caseMutate('docker socket present', 'qualification-manifest.json', (v) => { v.docker_socket = 1; }, 'DOCKER_SOCKET_PRESENT');
+caseMutate('privileged true', 'qualification-manifest.json', (v) => { v.privileged = true; }, 'PRIVILEGED_FORBIDDEN');
+caseMutate('capabilities not dropped', 'qualification-manifest.json', (v) => { v.capabilities = 'default'; }, 'CAPABILITIES_NOT_DROPPED');
+caseMutate('filesystem not read-only', 'qualification-manifest.json', (v) => { v.read_only_runtime = false; }, 'READ_ONLY_RUNTIME_REQUIRED');
+caseMutate('rounds requested incorrect', 'qualification-manifest.json', (v) => { v.rounds_requested = 2; }, 'SUMMARY_MISMATCH');
+caseMutate('rounds completed incorrect', 'qualification-manifest.json', (v) => { v.rounds_completed = 0; }, 'SUMMARY_MISMATCH');
+for (const gate of ['pre_run_clean', 'oci_identity', 'compose_policy', 'round_assertions', 'evidence_pairs', 'cleanup', 'egress', 'final']) caseMutate(`gate ${gate} not PASS`, 'gate-status.json', (v) => { v.gates[gate] = 'FAIL'; }, 'GATE_NOT_PASS');
+caseMutate('evidence-files inconsistent', 'evidence-files.json', (v) => { v.driver_files = ['driver-round-wrong.json']; }, 'EVIDENCE_FILES_INCONSISTENT');
+caseMutate('materialized-image inconsistent', 'materialized-image.json', (v) => { v.repo_digests = [`other@sha256:${'1'.repeat(64)}`]; }, 'IMAGE_DIGEST_MISMATCH');
+const driverAbsent = fixture(); fs.unlinkSync(path.join(driverAbsent.dir, 'driver', driverAbsent.driverName)); rejects('driver absent', () => generate(driverAbsent.dir), 'EVIDENCE_FILE_MISSING');
+caseMutate('driver filename mismatch', 'evidence-files.json', (v) => { v.final_files = ['final-round-other.json']; }, 'EVIDENCE_FILES_INCONSISTENT');
+const driverFileHash = fixture(); const dpath = path.join(driverFileHash.dir, 'driver', driverFileHash.driverName); const d = read(driverFileHash.dir, `driver/${driverFileHash.driverName}`); d.request_count = 5; jsonWrite(dpath, d); writeSums(driverFileHash.dir); rejects('driver file SHA mismatch', () => generate(driverFileHash.dir), 'DRIVER_PAYLOAD_SHA_MISMATCH');
+const driverPayloadHash = fixture(); mutate(driverPayloadHash.dir, `driver/${driverPayloadHash.driverName}`, (v) => { v.evidence_sha256 = '0'.repeat(64); }); rejects('driver payload SHA mismatch', () => generate(driverPayloadHash.dir), 'DRIVER_PAYLOAD_SHA_MISMATCH');
+caseMutate('final driver chain mismatch', valid.finalName, (v) => { v.driver_evidence.payload_sha256 = '0'.repeat(64); }, 'ROUND_EVIDENCE_MISMATCH');
+caseMutate('timestamps inconsistent', 'gate-status.json', (v) => { v.completed_at = '2026-07-23T02:59:00.000Z'; }, 'TIMESTAMPS_INCONSISTENT');
+test('reportable true rejected', () => { const c = generate(valid.dir).contract; c.reportable = true; assert.throws(() => validateClosedContract(c)); });
+test('environment incorrect rejected', () => { const c = generate(valid.dir).contract; c.environment = 'production'; assert.throws(() => validateClosedContract(c)); });
+test('private fields rejected', () => { const c = generate(valid.dir).contract; c.hostname = 'private'; assert.throws(() => validateClosedContract(c)); });
+test('unknown critical fields rejected', () => { const f = fixture(); mutate(f.dir, 'qualification-manifest.json', (v) => { v.unknown_gate = true; }); assert.throws(() => generate(f.dir), /UNKNOWN_CRITICAL_FIELD/); });
 console.log(`1..${passed}`);
