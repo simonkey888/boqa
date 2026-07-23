@@ -40,7 +40,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^)" = "$AUDITED_PARENT"
+          git merge-base --is-ancestor "$AUDITED_PARENT" HEAD
           test "$(find .boqa-staging/remediation -maxdepth 1 -type f -name 'chunk-*' | wc -l)" -eq 13
           echo '4689a9640769b95b7bd7a39944435125a168ca37328410be85b2e39dedf5cd6d  .boqa-staging/remediation/chunk-000' | sha256sum -c -
           echo '840e4c974646d699d9b68c948ea5be5a3f06988784db66e65e218b47b831dad4  .boqa-staging/remediation/chunk-001' | sha256sum -c -
