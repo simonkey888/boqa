@@ -20,7 +20,7 @@ function contract() {
     authorized_scope: 'synthetic_fixture', target_kind: 'owasp_juice_shop_pinned', policy_id: 'safe-lab-readonly-v1',
     source_sha: SHA, run_id: 'sha256:0123456789abcdef', cycle_started_at: '2026-07-23T03:00:00.000Z',
     cycle_finished_at: '2026-07-23T03:00:01.000Z', observed_at: '2026-07-23T03:00:02.000Z',
-    fresh_until: '2026-07-23T03:01:32.000Z', finding_count: 1, control_finding_count: 0,
+    fresh_until: '2026-07-23T03:01:32.000Z', unavailable_after: '2026-07-24T03:00:02.000Z', finding_count: 1, control_finding_count: 0,
     false_positive_count: 0, false_negative_count: 0, unauthorized_connection_count: 0,
     cleanup_verified: true, egress_blocked: true, storage_valid: true, request_budget_verified: true,
     evidence_checksum: `sha256:${'b'.repeat(64)}`, message: 'Validación completada en laboratorio controlado',
@@ -60,7 +60,14 @@ async function main() {
     const built = fs.readFileSync(path.join(out, 'worker.js'), 'utf8');
     assert.match(built, /["']?enabled["']?\s*:\s*true/);
     assert.doesNotMatch(built, /container_identities|runtime_identity|private-container|OCID|Authorization:/i);
-    assert.ok(fs.existsSync(path.join(out, 'dashboard', 'index.html')) && fs.existsSync(path.join(out, 'wrangler.toml')));
+    const compiledHtml = fs.readFileSync(path.join(out, 'dashboard', 'index.html'), 'utf8');
+    assert.match(compiledHtml, /data-environment="controlled_lab"/);
+    assert.doesNotMatch(compiledHtml, /id="lab-banner"[^>]*hidden/);
+    assert.ok(fs.existsSync(path.join(out, 'wrangler.toml')));
+    assert.equal(fs.existsSync(path.join(out, 'dashboard', 'cobros.html')), false);
+    assert.equal(fs.existsSync(path.join(out, 'dashboard', 'cobros.js')), false);
+    assert.equal(fs.existsSync(path.join(out, 'dashboard', 'private.css')), false);
+    assert.doesNotMatch(compiledHtml, /producci[oó]n/i);
   });
   await test('disabled build preserves production backend proxy', async () => {
     const worker = await importWorker(source());
@@ -82,7 +89,9 @@ async function main() {
     try {
       const response = await worker.fetch(new Request('https://preview.invalid/api/hunter/status'), {});
       assert.equal(response.status, 200); assert.match(response.headers.get('content-type') || '', /^application\/json/);
-      assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0'); assert.deepEqual(await response.json(), value); assert.equal(calls, 0);
+      assert.equal(response.headers.get('cache-control'), 'no-store, max-age=0'); assert.deepEqual(await response.json(), value);
+      const health = await (await worker.fetch(new Request('https://preview.invalid/api/health'), {})).json();
+      assert.equal(health.environment, 'controlled_lab'); assert.equal(health.promotion_ready, false); assert.equal(calls, 0);
     } finally { globalThis.fetch = original; }
   });
   await test('non-GET method is rejected', async () => {

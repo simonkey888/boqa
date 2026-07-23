@@ -117,6 +117,21 @@ function safeLabUnavailableResponse() {
   }, 503);
 }
 
+function safeLabHealthResponse(build, backendConfigured) {
+  return jsonResponse({
+    status: 'ok',
+    worker: 'boqa',
+    environment: 'controlled_lab',
+    mode: 'controlled_lab_preview',
+    backend_configured: backendConfigured,
+    source_sha: build.source_sha,
+    contract_checksum: build.contract_checksum,
+    promotion_ready: false,
+    promotion_blocker: 'CONTROLLED_LAB_PREVIEW',
+    timestamp: new Date().toISOString(),
+  });
+}
+
 function isAllowedApiRequest(request, pathname) {
   // The public dashboard consumes only these two minimal, read-only contracts.
   // Every other backend API remains undiscoverable at the public edge.
@@ -223,9 +238,10 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       const allowed = isAllowedApiRequest(request, url.pathname);
       if (!allowed) return jsonResponse({ error: 'not_found' }, 404);
-      if (url.pathname === '/api/hunter/status' && SAFE_LAB_PREVIEW_BUILD.enabled === true) {
+      if (SAFE_LAB_PREVIEW_BUILD.enabled === true) {
         if (!safeLabBuild) return safeLabUnavailableResponse();
-        return jsonResponse(safeLabBuild.contract);
+        if (url.pathname === '/api/hunter/status') return jsonResponse(safeLabBuild.contract);
+        if (url.pathname === '/api/health') return safeLabHealthResponse(safeLabBuild, backendConfigured);
       }
       if (!backendConfigured) return failClosedApi(url.pathname);
       return proxyToBackend(request, env);
@@ -239,17 +255,7 @@ export default {
     if (url.pathname === '/health') {
       if (SAFE_LAB_PREVIEW_BUILD.enabled === true) {
         if (!safeLabBuild) return safeLabUnavailableResponse();
-        return jsonResponse({
-          status: 'ok',
-          worker: 'boqa',
-          mode: 'controlled_lab_preview',
-          backend_configured: backendConfigured,
-          source_sha: safeLabBuild.source_sha,
-          contract_checksum: safeLabBuild.contract_checksum,
-          promotion_ready: false,
-          promotion_blocker: 'CONTROLLED_LAB_PREVIEW',
-          timestamp: new Date().toISOString(),
-        });
+        return safeLabHealthResponse(safeLabBuild, backendConfigured);
       }
       return jsonResponse({
         status: 'ok',

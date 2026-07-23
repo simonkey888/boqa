@@ -56,8 +56,19 @@ function replaceBuildBlock(workerSource, build) {
   return workerSource.slice(0, startIndex) + replacement + workerSource.slice(endIndex + END.length);
 }
 
-function copyDirectory(source, destination) {
-  fs.cpSync(source, destination, { recursive: true, force: false, errorOnExist: true });
+const PUBLIC_DASHBOARD_ASSETS = Object.freeze([
+  'index.html',
+  'app.js',
+  'dashboard-state.js',
+  'style.css',
+  'mobile.css',
+]);
+
+function copyPublicDashboard(source, destination) {
+  fs.mkdirSync(destination, { recursive: false });
+  for (const filename of PUBLIC_DASHBOARD_ASSETS) {
+    fs.copyFileSync(path.join(source, filename), path.join(destination, filename), fs.constants.COPYFILE_EXCL);
+  }
 }
 
 function buildSafeLabPreviewBundle(options) {
@@ -82,7 +93,16 @@ function buildSafeLabPreviewBundle(options) {
   const workerSource = fs.readFileSync(path.join(root, 'worker.js'), 'utf8');
   fs.writeFileSync(path.join(outputDir, 'worker.js'), replaceBuildBlock(workerSource, build), { flag: 'wx' });
   fs.copyFileSync(path.join(root, 'wrangler.toml'), path.join(outputDir, 'wrangler.toml'), fs.constants.COPYFILE_EXCL);
-  copyDirectory(path.join(root, 'dashboard'), path.join(outputDir, 'dashboard'));
+  copyPublicDashboard(path.join(root, 'dashboard'), path.join(outputDir, 'dashboard'));
+  const dashboardPath = path.join(outputDir, 'dashboard', 'index.html');
+  const dashboardHtml = fs.readFileSync(dashboardPath, 'utf8');
+  const compiledDashboard = dashboardHtml
+    .replace('data-environment="unknown"', 'data-environment="controlled_lab"')
+    .replace('id="lab-banner" class="lab-banner" aria-label="Entorno de laboratorio controlado" hidden', 'id="lab-banner" class="lab-banner" aria-label="Entorno de laboratorio controlado"');
+  if (compiledDashboard === dashboardHtml || !compiledDashboard.includes('data-environment="controlled_lab"')) {
+    fail('DASHBOARD_LAB_MARKER_MISSING');
+  }
+  fs.writeFileSync(dashboardPath, compiledDashboard);
   const policy = {
     schema_version: 1,
     environment: 'controlled_lab',

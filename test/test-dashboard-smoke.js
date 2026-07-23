@@ -40,6 +40,27 @@ assert.match(state, /LOADING/);
 assert.match(state, /FRESH/);
 assert.match(state, /STALE/);
 assert.match(state, /UNAVAILABLE/);
+
+assert.match(html, /data-environment=["']unknown["']/, 'source dashboard must default to non-lab mode');
+assert.match(html, /id=["']lab-banner["'][^>]*hidden/, 'source dashboard lab banner must be hidden until explicit lab build');
+assert.match(html, />LAB CONTROLADO</, 'dashboard must contain an explicit textual lab label');
+assert.match(html, /id=["']lab-panel["']/, 'dashboard must expose the controlled-lab evidence panel');
+for (const field of ['lab-state', 'lab-reportable', 'lab-cycle', 'lab-policy', 'lab-control', 'lab-egress', 'lab-cleanup']) {
+  assert.match(html, new RegExp(`id=[\"']${field}[\"']`), `dashboard must expose ${field}`);
+}
+assert.doesNotMatch(html.match(/id=["']lab-banner["'][\s\S]*?<\/section>/)[0], /producci[oó]n/i, 'visible lab banner must not use production wording');
+assert.match(app, /COMPILED_LAB/, 'lab label persistence must be compiled into the preview build');
+assert.match(app, /mode = 'lab-complete'/, 'completed one-shot lab cycle must use a stopped animation mode');
+assert.match(app, /El hunter permanece detenido/, 'completed lab cycle must state that the hunter is stopped');
+assert.match(app, /labVisible = COMPILED_LAB \|\| isLab/, 'compiled lab banner must persist during transport errors');
+assert.match(state, /lab_evidence_stale/, 'dashboard state must self-expire FRESH evidence to STALE');
+assert.match(state, /lab_evidence_expired/, 'dashboard state must self-expire old evidence to UNAVAILABLE');
+assert.match(state, /lab_contract_fields_invalid/, 'dashboard must reject unknown lab contract fields');
+assert.match(css, /data-mode=["']lab-complete["']/, 'completed lab mode must have a dedicated stopped visual state');
+assert.doesNotMatch(css.match(/\.hunt-live\[data-mode=["']lab-complete["']\][\s\S]*?\}/)[0], /animation\s*:\s*[^n]/i, 'completed lab mode must not animate');
+assert.match(worker, /url\.pathname === '\/api\/health'\) return safeLabHealthResponse/, 'lab preview health must not depend on production backend health');
+assert.match(worker, /SAFE_LAB_PREVIEW_BUILD\.enabled === true/, 'lab behavior must be gated by an explicit build-time block');
+assert.match(worker, /promotion_blocker !== 'CONTROLLED_LAB_PREVIEW'/, 'invalid promotion blocker must fail closed');
 assert.match(worker, /proxyHeaders\.set\('X-API-Key', workerApiKey\)/, 'Worker must overwrite upstream API key');
 assert.match(worker, /'\/api\/hunter\/status'/, 'Worker must proxy hunter status');
 assert.doesNotMatch(worker, /default_api_key|DEMO_BUGS|DEMO_HEALTH|demoJsonEvidence|example\.com|mock data/i, 'Worker must not expose keys or demo state');

@@ -98,6 +98,90 @@ const recovered = State.buildModel({
 assert.equal(recovered.overall.view_state, 'FRESH');
 
 
+const labPayload = {
+  schema_version: 1,
+  environment: 'controlled_lab',
+  status: 'FRESH',
+  hunter_state: 'LAB_COMPLETE',
+  reportable: false,
+  authorized_scope: 'synthetic_fixture',
+  target_kind: 'owasp_juice_shop_pinned',
+  policy_id: 'safe-lab-readonly-v1',
+  source_sha: 'a'.repeat(40),
+  run_id: 'sha256:0123456789abcdef',
+  cycle_started_at: '2026-07-17T18:39:40.000Z',
+  cycle_finished_at: '2026-07-17T18:39:45.000Z',
+  observed_at: '2026-07-17T18:39:46.000Z',
+  fresh_until: '2026-07-17T18:40:30.000Z',
+  unavailable_after: '2026-07-18T18:39:46.000Z',
+  finding_count: 1,
+  control_finding_count: 0,
+  false_positive_count: 0,
+  false_negative_count: 0,
+  unauthorized_connection_count: 0,
+  cleanup_verified: true,
+  egress_blocked: true,
+  storage_valid: true,
+  request_budget_verified: true,
+  evidence_checksum: `sha256:${'b'.repeat(64)}`,
+  message: 'Validación completada en laboratorio controlado',
+};
+const labHealth = {
+  status: 'ok',
+  environment: 'controlled_lab',
+  timestamp: '2026-07-17T18:39:59.000Z',
+};
+
+const labFresh = State.buildModel({
+  previous: State.createInitialModel(),
+  nowMs: now,
+  hunter: { ok: true, status: 200, payload: labPayload },
+  health: { ok: true, status: 200, payload: labHealth },
+});
+assert.equal(labFresh.environment, 'controlled_lab');
+assert.equal(labFresh.sources.hunter.view_state, 'FRESH');
+assert.equal(labFresh.overall.view_state, 'FRESH');
+assert.equal(labFresh.sources.hunter.payload.hunter_state, 'LAB_COMPLETE');
+
+const labStale = State.buildModel({
+  previous: labFresh,
+  nowMs: Date.parse('2026-07-17T18:41:00.000Z'),
+  hunter: { ok: true, status: 200, payload: labPayload },
+  health: { ok: true, status: 200, payload: { ...labHealth, timestamp: '2026-07-17T18:40:59.000Z' } },
+});
+assert.equal(labStale.sources.hunter.view_state, 'STALE');
+assert.equal(labStale.sources.hunter.reason, 'lab_evidence_stale');
+assert.equal(labStale.overall.view_state, 'STALE');
+
+const labExpired = State.buildModel({
+  previous: labStale,
+  nowMs: Date.parse('2026-07-18T18:40:00.000Z'),
+  hunter: { ok: true, status: 200, payload: labPayload },
+  health: { ok: true, status: 200, payload: { ...labHealth, timestamp: '2026-07-18T18:39:59.000Z' } },
+});
+assert.equal(labExpired.sources.hunter.view_state, 'UNAVAILABLE');
+assert.equal(labExpired.sources.hunter.reason, 'lab_evidence_expired');
+assert.equal(labExpired.overall.view_state, 'DEGRADED');
+
+const labFuture = State.buildModel({
+  previous: State.createInitialModel(),
+  nowMs: Date.parse('2026-07-17T18:39:30.000Z'),
+  hunter: { ok: true, status: 200, payload: labPayload },
+  health: { ok: true, status: 200, payload: { ...labHealth, timestamp: '2026-07-17T18:39:29.000Z' } },
+});
+assert.equal(labFuture.sources.hunter.view_state, 'N/D');
+assert.equal(labFuture.sources.hunter.reason, 'lab_contract_timestamp_future');
+
+const labUnknownField = State.buildModel({
+  previous: State.createInitialModel(),
+  nowMs: now,
+  hunter: { ok: true, status: 200, payload: { ...labPayload, private_path: '/internal/evidence' } },
+  health: { ok: true, status: 200, payload: labHealth },
+});
+assert.equal(labUnknownField.sources.hunter.view_state, 'N/D');
+assert.equal(labUnknownField.sources.hunter.reason, 'lab_contract_fields_invalid');
+
+
 
 async function runNetworkContracts() {
   const ok = await State.fetchJsonContract(async () => ({

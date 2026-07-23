@@ -15,6 +15,15 @@
   });
 
   const HUNTER_STATES = new Set(['STOPPED', 'STARTING', 'ACTIVE', 'DEGRADED', 'BLOCKED', 'ERROR']);
+  const LAB_VIEW_STATES = new Set(['FRESH', 'STALE', 'UNAVAILABLE']);
+  const LAB_CONTRACT_KEYS = new Set([
+    'schema_version', 'environment', 'status', 'hunter_state', 'reportable',
+    'authorized_scope', 'target_kind', 'policy_id', 'source_sha', 'run_id',
+    'cycle_started_at', 'cycle_finished_at', 'observed_at', 'fresh_until', 'unavailable_after',
+    'finding_count', 'control_finding_count', 'false_positive_count', 'false_negative_count',
+    'unauthorized_connection_count', 'cleanup_verified', 'egress_blocked', 'storage_valid',
+    'request_budget_verified', 'evidence_checksum', 'message',
+  ]);
   const DEFAULT_MAX_AGE_MS = 90_000;
 
   function isObject(value) {
@@ -56,21 +65,63 @@
         hunter: initialSource('hunter', '/api/hunter/status'),
         health: initialSource('health', '/api/health'),
       },
+      environment: null,
       release_sha: null,
       release_changed: false,
       updated_at: null,
     };
   }
 
+  function validateLabHunterPayload(payload) {
+    const keys = Object.keys(payload);
+    if (keys.length !== LAB_CONTRACT_KEYS.size || keys.some((key) => !LAB_CONTRACT_KEYS.has(key))) {
+      return { valid: false, reason: 'lab_contract_fields_invalid' };
+    }
+    if (payload.schema_version !== 1 || payload.environment !== 'controlled_lab') {
+      return { valid: false, reason: 'lab_contract_identity_invalid' };
+    }
+    if (payload.reportable !== false || payload.hunter_state !== 'LAB_COMPLETE' || !LAB_VIEW_STATES.has(payload.status)) {
+      return { valid: false, reason: 'lab_contract_state_invalid' };
+    }
+    if (!/^[a-f0-9]{40}$/.test(String(payload.source_sha || '')) ||
+        !/^sha256:[a-f0-9]{16}$/.test(String(payload.run_id || '')) ||
+        !/^sha256:[a-f0-9]{64}$/.test(String(payload.evidence_checksum || '')) ||
+        payload.policy_id !== 'safe-lab-readonly-v1' ||
+        payload.authorized_scope !== 'synthetic_fixture' ||
+        payload.target_kind !== 'owasp_juice_shop_pinned') {
+      return { valid: false, reason: 'lab_contract_provenance_invalid' };
+    }
+    const started = validIso(payload.cycle_started_at);
+    const finished = validIso(payload.cycle_finished_at);
+    const observed = validIso(payload.observed_at);
+    const freshUntil = validIso(payload.fresh_until);
+    const unavailableAfter = validIso(payload.unavailable_after);
+    if (!started || !finished || !observed || !freshUntil || !unavailableAfter) {
+      return { valid: false, reason: 'lab_contract_timestamp_invalid' };
+    }
+    const ordered = [started, finished, observed, freshUntil, unavailableAfter].map(Date.parse);
+    if (!(ordered[0] <= ordered[1] && ordered[1] <= ordered[2] && ordered[2] <= ordered[3] && ordered[3] <= ordered[4])) {
+      return { valid: false, reason: 'lab_contract_timestamps_inconsistent' };
+    }
+    if (payload.finding_count !== 1 || payload.control_finding_count !== 0 || payload.false_positive_count !== 0 || payload.false_negative_count !== 0 || payload.unauthorized_connection_count !== 0) {
+      return { valid: false, reason: 'lab_contract_controls_invalid' };
+    }
+    if (payload.cleanup_verified !== true || payload.egress_blocked !== true || payload.storage_valid !== true || payload.request_budget_verified !== true) {
+      return { valid: false, reason: 'lab_contract_gates_invalid' };
+    }
+    return { valid: true, timestamp: observed, kind: 'controlled_lab', freshUntil, unavailableAfter };
+  }
+
   function validateHunterPayload(payload) {
     if (!isObject(payload)) return { valid: false, reason: 'hunter_payload_not_object' };
+    if (payload.environment === 'controlled_lab') return validateLabHunterPayload(payload);
     if (!HUNTER_STATES.has(payload.state)) return { valid: false, reason: 'hunter_state_invalid_or_missing' };
     const timestamp = validIso(payload.timestamp);
     if (!timestamp) return { valid: false, reason: 'hunter_timestamp_invalid_or_missing' };
     if (payload.freshness !== undefined && !isObject(payload.freshness)) {
       return { valid: false, reason: 'hunter_freshness_invalid' };
     }
-    return { valid: true, timestamp };
+    return { valid: true, timestamp, kind: 'runtime' };
   }
 
   function validateHealthPayload(payload) {
@@ -121,11 +172,32 @@
       };
     }
 
-    const ageMs = Math.max(0, nowMs - Date.parse(validation.timestamp));
+    const sourceMs = Date.parse(validation.timestamp);
+    if (validation.kind === 'controlled_lab' && sourceMs > nowMs) {
+      return {
+        ...base,
+        view_state: VIEW_STATES.ND,
+        reason: 'lab_contract_timestamp_future',
+        received_at: receivedAt,
+        http_status: Number.isInteger(transport.status) ? transport.status : 200,
+      };
+    }
+    const ageMs = Math.max(0, nowMs - sourceMs);
     let viewState = VIEW_STATES.FRESH;
     let reason = 'contract_valid_and_fresh';
 
-    if (ageMs > maxAgeMs) {
+    if (validation.kind === 'controlled_lab') {
+      if (nowMs > Date.parse(validation.unavailableAfter) || transport.payload.status === 'UNAVAILABLE') {
+        viewState = VIEW_STATES.UNAVAILABLE;
+        reason = 'lab_evidence_expired';
+      } else if (nowMs > Date.parse(validation.freshUntil) || transport.payload.status === 'STALE') {
+        viewState = VIEW_STATES.STALE;
+        reason = 'lab_evidence_stale';
+      } else {
+        viewState = VIEW_STATES.FRESH;
+        reason = 'lab_contract_valid_and_fresh';
+      }
+    } else if (ageMs > maxAgeMs) {
       viewState = VIEW_STATES.STALE;
       reason = 'source_timestamp_stale';
     } else if (name === 'hunter') {
@@ -197,11 +269,15 @@
       : sourceFromTransport('hunter', '/api/hunter/status', options.hunter, nowMs, maxAgeMs);
     const health = options.health === undefined ? baseline.sources.health : healthCandidate;
     const sources = { hunter, health };
+    const environment = hunter.payload && hunter.payload.environment === 'controlled_lab'
+      ? 'controlled_lab'
+      : (hunter.payload ? 'production' : previous.environment);
 
     return {
       overall: deriveOverall(sources, nowMs),
       sources,
-      release_sha: nextRelease || (releaseChanged ? null : previous.release_sha),
+      environment,
+      release_sha: environment === 'controlled_lab' ? null : (nextRelease || (releaseChanged ? null : previous.release_sha)),
       release_changed: releaseChanged,
       updated_at: new Date(nowMs).toISOString(),
     };
@@ -242,6 +318,7 @@
     DEFAULT_MAX_AGE_MS,
     createInitialModel,
     validateHunterPayload,
+    validateLabHunterPayload,
     validateHealthPayload,
     sourceFromTransport,
     deriveOverall,

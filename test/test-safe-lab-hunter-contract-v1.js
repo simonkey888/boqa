@@ -211,6 +211,7 @@ test('valid evidence produces closed FRESH one-shot contract', () => {
   assert.equal(generated.contract.environment, 'controlled_lab');
   assert.equal(generated.contract.reportable, false);
   assert.equal(generated.contract.hunter_state, 'LAB_COMPLETE');
+  assert.equal(generated.contract.unavailable_after, '2026-07-24T02:59:54.000Z');
   assert.ok(!generated.json.includes('ACTIVE'));
   assert.match(generated.checksum, /^sha256:[a-f0-9]{64}$/);
 });

@@ -8,10 +8,15 @@
   const ENDPOINTS = Object.freeze({ hunter: '/api/hunter/status', health: '/api/health' });
   const POLL_MS = 15_000;
   const MAX_AGE_MS = 90_000;
+  const COMPILED_LAB = document.body.dataset.environment === 'controlled_lab';
   const REASON_LABELS = Object.freeze({
     awaiting_first_response: 'Esperando primera respuesta',
     awaiting_required_sources: 'Esperando fuentes requeridas',
     contract_valid_and_fresh: 'Contrato válido y actualizado',
+    lab_contract_valid_and_fresh: 'Evidencia de laboratorio válida y vigente',
+    lab_evidence_stale: 'Evidencia de laboratorio vencida',
+    lab_evidence_expired: 'Evidencia de laboratorio no disponible por antigüedad',
+    lab_contract_timestamp_future: 'Timestamp futuro inválido en evidencia de laboratorio',
     source_timestamp_stale: 'Timestamp de fuente vencido',
     hunter_freshness_contract_stale: 'Señal del hunter vencida',
     health_status_degraded: 'Health degradado',
@@ -141,7 +146,21 @@
     let labelText = 'Esperando estado real';
     let detailText = 'Sin datos del runtime.';
 
-    if (!payload) {
+    if (payload && payload.environment === 'controlled_lab') {
+      if (hunter.view_state === 'FRESH') {
+        mode = 'lab-complete';
+        labelText = 'Ciclo de laboratorio completado';
+        detailText = 'Evidencia sintética vigente. El hunter permanece detenido.';
+      } else if (hunter.view_state === 'STALE') {
+        mode = 'stale';
+        labelText = 'Evidencia de laboratorio vencida';
+        detailText = 'El ciclo terminó y su evidencia perdió frescura.';
+      } else {
+        mode = 'alert';
+        labelText = 'Evidencia de laboratorio no disponible';
+        detailText = 'El contrato expiró o no superó la validación.';
+      }
+    } else if (!payload) {
       if (hunter.view_state === 'STALE') {
         mode = 'stale';
         labelText = 'Señal vencida';
@@ -198,9 +217,34 @@
 
     const hunter = next.sources.hunter;
     const health = next.sources.health;
+    const payload = hunter.payload;
+    const isLab = Boolean(payload && payload.environment === 'controlled_lab');
+    const labVisible = COMPILED_LAB || isLab;
+    document.body.dataset.environment = labVisible ? 'controlled_lab' : 'production';
+    $('lab-banner').hidden = !labVisible;
+    $('hunter-source-title').textContent = labVisible ? 'Hunter · LAB CONTROLADO' : 'Hunter runtime';
+    $('health-source-title').textContent = labVisible ? 'Preview health' : 'Backend health';
+    $('hero-title').textContent = labVisible ? 'Laboratorio controlado. Estado verificable.' : 'Sin ruido. Sólo estado real.';
+    $('hero-lede').innerHTML = labVisible
+      ? 'Evidencia sintética y autorizada. <strong>No reportable</strong>; vista exclusiva del laboratorio controlado.'
+      : 'Datos públicos verificables. <strong>N/D</strong> si falta una fuente; <strong>STALE</strong> si perdió vigencia.';
+
     renderSource('hunter', hunter);
     renderSource('health', health);
     renderHuntLive(hunter);
+
+    $('lab-panel').hidden = !labVisible;
+    $('runtime-panel').hidden = labVisible;
+    $('health-panel').hidden = labVisible;
+    $('findings-panel').hidden = labVisible;
+    $('qualification-panel').hidden = labVisible;
+    $('lab-state').textContent = isLab ? hunter.view_state : 'UNAVAILABLE';
+    $('lab-reportable').textContent = 'NO';
+    renderTime($('lab-cycle'), isLab && payload.cycle_finished_at);
+    $('lab-policy').textContent = text(isLab && payload.policy_id);
+    $('lab-control').textContent = isLab && payload.control_finding_count === 0 ? 'LIMPIO · 0' : 'N/D';
+    $('lab-egress').textContent = isLab && payload.egress_blocked === true ? 'BLOQUEADO' : 'N/D';
+    $('lab-cleanup').textContent = isLab && payload.cleanup_verified === true ? 'VERIFICADO' : 'N/D';
 
     $('hunter-state').textContent = text(hunter.payload && hunter.payload.state);
     renderTime($('heartbeat-at'), hunter.payload && hunter.payload.heartbeat_at);
@@ -220,8 +264,8 @@
       : '';
 
     const dataAvailable = Boolean(hunter.payload || health.payload);
-    $('empty-state').hidden = dataAvailable;
-    $('status-grid').hidden = !dataAvailable;
+    $('empty-state').hidden = dataAvailable || labVisible;
+    $('status-grid').hidden = !(dataAvailable || labVisible);
   }
 
   async function poll() {
