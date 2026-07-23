@@ -1,0 +1,61 @@
+name: BOQA Source Snapshot — Implementation Only
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+concurrency:
+  group: boqa-source-snapshot-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  source-snapshot:
+    if: github.head_ref == 'feat/boqa-safe-lab-hunter-contract-v1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          mkdir -p source-snapshot
+          printf '%s\n' "SOURCE_SHA=$(git rev-parse HEAD)" > source-snapshot/source-identity.txt
+          printf '%s\n' "TREE_SHA=$(git rev-parse HEAD^{tree})" >> source-snapshot/source-identity.txt
+          printf '%s\n' "WORKFLOW_RUN_ID=${GITHUB_RUN_ID}" >> source-snapshot/source-identity.txt
+          printf '%s\n' "PRODUCTION_CHANGED=false" >> source-snapshot/source-identity.txt
+
+      - name: Package repository source
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./output' \
+            --exclude='./source-snapshot' \
+            -czf source-snapshot/boqa-source.tgz .
+          (cd source-snapshot && sha256sum boqa-source.tgz source-identity.txt > SHA256SUMS)
+
+      - name: Upload bounded source snapshot
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: boqa-source-snapshot-${{ github.event.pull_request.head.sha }}
+          path: source-snapshot/
+          if-no-files-found: error
+          retention-days: 1
