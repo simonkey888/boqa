@@ -98,13 +98,33 @@ function hiddenPrivateResponse(pathname) {
   return new Response('Not Found', { status: 404, headers });
 }
 
-function getSafeLabPreviewBuild() {
+function canonicalizeForChecksum(value) {
+  if (Array.isArray(value)) return value.map(canonicalizeForChecksum);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((result, key) => {
+      result[key] = canonicalizeForChecksum(value[key]);
+      return result;
+    }, {});
+  }
+  return value;
+}
+
+async function sha256Hex(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function getSafeLabPreviewBuild() {
   const build = SAFE_LAB_PREVIEW_BUILD;
   if (!build || build.enabled !== true) return null;
   if (build.promotion_ready !== false || build.promotion_blocker !== 'CONTROLLED_LAB_PREVIEW') return null;
   if (!build.contract || build.contract.environment !== 'controlled_lab' || build.contract.reportable !== false) return null;
   if (build.contract.hunter_state !== 'LAB_COMPLETE' || build.contract.source_sha !== build.source_sha) return null;
   if (!/^sha256:[a-f0-9]{64}$/.test(String(build.contract_checksum || ''))) return null;
+  const canonical = `${JSON.stringify(canonicalizeForChecksum(build.contract))}\n`;
+  const actualChecksum = `sha256:${await sha256Hex(canonical)}`;
+  if (actualChecksum !== build.contract_checksum) return null;
   return build;
 }
 
@@ -115,21 +135,6 @@ function safeLabUnavailableResponse() {
     status: 'UNAVAILABLE',
     reportable: false,
   }, 503);
-}
-
-function safeLabHealthResponse(build, backendConfigured) {
-  return jsonResponse({
-    status: 'ok',
-    worker: 'boqa',
-    environment: 'controlled_lab',
-    mode: 'controlled_lab_preview',
-    backend_configured: backendConfigured,
-    source_sha: build.source_sha,
-    contract_checksum: build.contract_checksum,
-    promotion_ready: false,
-    promotion_blocker: 'CONTROLLED_LAB_PREVIEW',
-    timestamp: new Date().toISOString(),
-  });
 }
 
 function isAllowedApiRequest(request, pathname) {
@@ -229,7 +234,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const backendConfigured = Boolean(env && env.BOQA_BACKEND_URL);
-    const safeLabBuild = getSafeLabPreviewBuild();
+    const safeLabBuild = await getSafeLabPreviewBuild();
 
     if (isPrivateSurface(url.pathname)) {
       return hiddenPrivateResponse(url.pathname);
@@ -238,10 +243,9 @@ export default {
     if (url.pathname.startsWith('/api/')) {
       const allowed = isAllowedApiRequest(request, url.pathname);
       if (!allowed) return jsonResponse({ error: 'not_found' }, 404);
-      if (SAFE_LAB_PREVIEW_BUILD.enabled === true) {
+      if (url.pathname === '/api/hunter/status' && SAFE_LAB_PREVIEW_BUILD.enabled === true) {
         if (!safeLabBuild) return safeLabUnavailableResponse();
-        if (url.pathname === '/api/hunter/status') return jsonResponse(safeLabBuild.contract);
-        if (url.pathname === '/api/health') return safeLabHealthResponse(safeLabBuild, backendConfigured);
+        return jsonResponse(safeLabBuild.contract);
       }
       if (!backendConfigured) return failClosedApi(url.pathname);
       return proxyToBackend(request, env);
@@ -255,7 +259,17 @@ export default {
     if (url.pathname === '/health') {
       if (SAFE_LAB_PREVIEW_BUILD.enabled === true) {
         if (!safeLabBuild) return safeLabUnavailableResponse();
-        return safeLabHealthResponse(safeLabBuild, backendConfigured);
+        return jsonResponse({
+          status: 'ok',
+          worker: 'boqa',
+          mode: 'controlled_lab_preview',
+          backend_configured: backendConfigured,
+          source_sha: safeLabBuild.source_sha,
+          contract_checksum: safeLabBuild.contract_checksum,
+          promotion_ready: false,
+          promotion_blocker: 'CONTROLLED_LAB_PREVIEW',
+          timestamp: new Date().toISOString(),
+        });
       }
       return jsonResponse({
         status: 'ok',

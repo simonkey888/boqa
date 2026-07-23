@@ -6,17 +6,24 @@ const path = require('path');
 const { generateSafeLabHunterContract } = require('../lib/safe-lab-hunter-contract-v1');
 
 function usage() {
-  console.error('Usage: node scripts/generate-safe-lab-contract.js <evidence-dir> <source-sha> <output-json> [now-iso]');
+  console.error('Usage: node scripts/generate-safe-lab-contract.js <evidence-dir> <head-sha> <merge-sha> <tree-sha> <workflow-run-id> <output-json> [now-iso]');
   process.exit(2);
 }
 
-const [evidenceDir, sourceSha, outputJson, nowIso] = process.argv.slice(2);
-if (!evidenceDir || !sourceSha || !outputJson) usage();
+const [evidenceDir, sourceSha, mergeSha, treeSha, workflowRunId, outputJson, nowIso] = process.argv.slice(2);
+if (!evidenceDir || !sourceSha || !mergeSha || !treeSha || !workflowRunId || !outputJson) usage();
 const nowMs = nowIso ? Date.parse(nowIso) : Date.now();
 if (!Number.isFinite(nowMs)) usage();
 
 try {
-  const generated = generateSafeLabHunterContract({ evidenceDir, expectedSourceSha: sourceSha, nowMs });
+  const generated = generateSafeLabHunterContract({
+    evidenceDir,
+    expectedSourceSha: sourceSha,
+    expectedMergeSha: mergeSha,
+    expectedTreeSha: treeSha,
+    expectedWorkflowRunId: workflowRunId,
+    nowMs,
+  });
   const outputPath = path.resolve(outputJson);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, generated.json, { flag: 'wx' });

@@ -129,4 +129,7 @@
     min-height: 0;
   }
 }
-@media(max-width:520px){.lab-banner{align-items:flex-start;flex-direction:column;gap:6px;padding:12px}.lab-banner span{text-align:left;font-size:11px}.lab-panel{grid-column:auto}}
+
+@media (max-width: 420px) {
+  .lab-banner { align-items: flex-start; flex-direction: column; }
+}
